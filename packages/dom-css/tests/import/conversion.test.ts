@@ -375,6 +375,33 @@ describe('@open-pencil/dom-css conversion', () => {
     expect(roundTripImage.attrs.src).toStartWith('data:image/png;base64,')
   })
 
+  it('maps a data URL CSS background image onto the box', () => {
+    const graph = designDocumentToSceneGraph({
+      type: 'document',
+      children: [
+        {
+          type: 'element',
+          tagName: 'div',
+          attrs: {},
+          computedStyle: {
+            width: '320px',
+            height: '180px',
+            'background-image': `url("${TRANSPARENT_PIXEL_DATA_URL}")`,
+            'background-size': 'cover'
+          },
+          children: []
+        }
+      ]
+    })
+    const page = graph.getPages()[0]
+    const box = expectFrame(page ? graph.getChildren(page.id)[0] : undefined)
+    const fill = box.fills[0]
+
+    expect(fill?.type).toBe('IMAGE')
+    expect(fill?.imageScaleMode).toBe('FILL')
+    expect(fill?.imageHash ? graph.images.has(fill.imageHash) : false).toBe(true)
+  })
+
   it('round-trips logical padding, side borders, opacity, and text style fields', () => {
     const graph = createStyleRoundTripGraph()
     const panel = expectStyleRoundTripPanel(graph)

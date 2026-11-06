@@ -116,6 +116,36 @@ function bytesFromDataURL(value: string | undefined): Uint8Array | null {
   return toUint8Array(body)
 }
 
+/** The first image URL of a CSS background, including a data URL the capture inlined. */
+function backgroundImageURL(value: string | undefined): string | null {
+  if (!value || value === 'none') return null
+  const match = /url\(\s*(?:'([^']*)'|"([^"]*)"|([^)]*))\s*\)/i.exec(value)
+  return match?.[1] ?? match?.[2] ?? match?.[3] ?? null
+}
+
+function applyBackgroundImage(
+  graph: SceneGraph,
+  node: SceneNode,
+  style: DesignStyleDeclaration
+): void {
+  const url = backgroundImageURL(pickStyle(style, 'background-image'))
+  const bytes = bytesFromDataURL(url ?? undefined)
+  if (!bytes) return
+  const imageHash = computeImageHash(bytes)
+  graph.images.set(imageHash, bytes)
+  node.fills = [
+    ...node.fills,
+    {
+      type: 'IMAGE',
+      imageHash,
+      imageScaleMode: pickStyle(style, 'background-size') === 'contain' ? 'FIT' : 'FILL',
+      color: TRANSPARENT,
+      opacity: 1,
+      visible: true
+    }
+  ]
+}
+
 function applyImageFill(
   graph: SceneGraph,
   node: SceneNode,
@@ -163,6 +193,7 @@ function applyElementStyle(
 
   const fills = fillsFromStyle(style, 'background-color')
   if (fills.length > 0) node.fills = fills
+  applyBackgroundImage(graph, node, style)
   applyImageFill(graph, node, element, style)
 
   // A border without a style is not drawn and takes no room.
