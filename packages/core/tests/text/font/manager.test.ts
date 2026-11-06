@@ -1,11 +1,12 @@
 import { expect, test } from 'bun:test'
 import { join } from 'node:path'
 
-import { FIXTURES } from '@open-pencil/test-support/paths'
 import type { CanvasKit, TypefaceFontProvider } from 'canvaskit-wasm'
 
-import { getCanvasKit } from '#core/canvaskit'
 import { FontManager, facesFromStyles } from '@open-pencil/core/text'
+import { FIXTURES } from '@open-pencil/test-support/paths'
+
+import { getCanvasKit } from '#core/canvaskit'
 
 /** A font manager that asks no web provider, so a family's faces come from its catalog. */
 function offlineManager() {
@@ -24,6 +25,15 @@ function countingProvider() {
   } as TypefaceFontProvider
   return { provider, registrations }
 }
+
+test('lists a face registered by an import among the font library options', async () => {
+  const manager = offlineManager()
+  await manager.markLoaded('Imported Brand', 'Regular', new Uint8Array(16).fill(7).buffer)
+
+  const options = await manager.listFamilyOptions()
+
+  expect(options).toContainEqual({ family: 'Imported Brand', source: 'registered' })
+})
 
 test('the canvases of one CanvasKit share a provider, so each face is copied into it once', async () => {
   const manager = offlineManager()
@@ -259,7 +269,9 @@ test('leaves installed faces to the page, which draws them by name', async () =>
   expect(registered).toEqual(['Inter Regular'])
 
   // A file that replaces the installed one, as a web font does a fallback, keeps that one off it.
-  const replacement = await Bun.file(join(FIXTURES, 'fonts', 'InterVariable-Latin.ttf')).arrayBuffer()
+  const replacement = await Bun.file(
+    join(FIXTURES, 'fonts', 'InterVariable-Latin.ttf')
+  ).arrayBuffer()
   await manager.markLoaded('Installed Sans', 'Regular', replacement)
   expect(registered).toEqual(['Inter Regular', 'Installed Sans Regular'])
 })

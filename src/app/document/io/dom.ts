@@ -1,9 +1,12 @@
+import { isValid, toUint8Array } from 'js-base64'
+
 import { resolveEditorProfile, type Editor, type EditorState } from '@open-pencil/core'
 import {
   HTML_IMPORT_VIEWPORT,
   sceneGraphFromStyledHTML
 } from '@open-pencil/core/io/formats/html/layers'
-import { browserHTMLToDesignDocument } from '@open-pencil/dom-css/browser'
+import { faceStyleName, fontManager, sfntFont } from '@open-pencil/core/text'
+import { browserHTMLToDesignDocument, parseFontFaceRules } from '@open-pencil/dom-css/browser'
 import { nextFrame } from '@open-pencil/vue/shared/frame'
 
 import { describeDiagnosticError, recordDocumentFailure } from '@/app/diagnostics'
@@ -52,6 +55,68 @@ function documentNameFor(file: File): string {
   return file.name.replace(/\.(html?|xhtml)$/i, '')
 }
 
+function dataURLBytes(url: string): ArrayBuffer | null {
+  const comma = url.indexOf(',')
+  if (comma === -1) return null
+  if (!url.slice(5, comma).toLowerCase().includes(';base64')) return null
+  const payload = url.slice(comma + 1)
+  if (!isValid(payload)) return null
+  const bytes = toUint8Array(payload)
+  const copy = new Uint8Array(bytes.byteLength)
+  copy.set(bytes)
+  return copy.buffer
+}
+
+async function fontData(url: string): Promise<ArrayBuffer | null> {
+  if (url.startsWith('data:')) return dataURLBytes(url)
+  try {
+    const response = await fetch(url, { credentials: 'include' })
+    return response.ok ? await response.arrayBuffer() : null
+  } catch (error) {
+    console.warn('Font request failed:', url, error)
+    return null
+  }
+}
+
+/**
+ * Registers the page's `@font-face` files with the font manager, so the imported text draws in
+ * them and they join the font library. A font that fails to load is left to the fallback chain.
+ */
+async function registerPageFonts(html: string, cssText?: string): Promise<void> {
+  const document = new DOMParser().parseFromString(html, 'text/html')
+  const base = document.querySelector('base')?.getAttribute('href') ?? document.baseURI
+  const styles = [...document.querySelectorAll('style')].map((style) => style.textContent)
+  if (cssText) styles.push(cssText)
+  const links = [
+    ...document.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"][href]')
+  ].map((link) => link.href)
+  const linked = await Promise.allSettled(
+    links.map(async (href) => {
+      const response = await fetch(href, { credentials: 'include' })
+      return response.ok ? response.text() : ''
+    })
+  )
+  for (const result of linked)
+    if (result.status === 'fulfilled' && result.value) styles.push(result.value)
+  const rules = styles.flatMap((css) => parseFontFaceRules(css, base))
+  await Promise.allSettled(
+    rules.map(async (rule) => {
+      const style = faceStyleName(rule.family, rule.weight, rule.italic)
+      if (fontManager.isStyleLoaded(rule.family, style)) return
+      for (const source of rule.sources) {
+        const data = await fontData(source)
+        if (!data) continue
+        try {
+          await fontManager.markLoaded(rule.family, style, await sfntFont(data))
+          return
+        } catch (error) {
+          console.warn('Font registration failed:', rule.family, source, error)
+        }
+      }
+    })
+  )
+}
+
 export function createDOMOpenActions({
   editor,
   state,
@@ -67,6 +132,8 @@ export function createDOMOpenActions({
     await nextFrame()
     const pageName = options.documentName ?? 'DOM Import'
     load.update({ phase: 'decoding', detail: pageName })
+    await registerPageFonts(html, options.cssText)
+    load.signal.throwIfAborted()
     // Laid out as a browser would, so layers land where the page put its elements.
     const styled = await browserHTMLToDesignDocument(html, {
       cssText: options.cssText,

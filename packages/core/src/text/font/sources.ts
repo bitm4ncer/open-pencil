@@ -14,7 +14,8 @@ export type FontLoadedSource = FontFamilySource | 'cache' | 'registered' | 'stan
 
 export interface FontFamilyOption {
   family: string
-  source: FontFamilySource
+  /** `registered` is a face this session loaded itself, such as an imported page's web font. */
+  source: FontFamilySource | 'registered'
 }
 
 export interface DownloadedFontCache {

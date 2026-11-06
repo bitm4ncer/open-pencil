@@ -337,6 +337,11 @@ export class FontManager {
       }
     }
     for (const font of fonts) byFamily.set(font.family, { family: font.family, source: 'local' })
+    // A page's imported web font is available to draw with even when no provider lists it.
+    for (const key of this.loadedFamilies.keys()) {
+      const family = key.slice(0, key.lastIndexOf('|'))
+      if (!byFamily.has(family)) byFamily.set(family, { family, source: 'registered' })
+    }
     return [...byFamily.values()].sort((a, b) => a.family.localeCompare(b.family))
   }
 
