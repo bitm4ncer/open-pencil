@@ -2,13 +2,23 @@
   "name": "@open-pencil/cli",
   "version": "0.17.0-beta.2",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/open-pencil/open-pencil.git",
+    "directory": "packages/cli"
+  },
+  "bin": {
+    "openpencil": "./bin/openpencil.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "src"
+  ],
   "type": "module",
   "imports": {
     "#cli/*": "./src/*.ts",
     "#cli-tests/*": "./tests/*.ts"
-  },
-  "bin": {
-    "openpencil": "./bin/openpencil.js"
   },
   "exports": {
     "./package.json": "./package.json",
@@ -25,23 +35,13 @@
       "default": "./dist/library/index.mjs"
     }
   },
-  "files": [
-    "bin",
-    "dist",
-    "src"
-  ],
-  "scripts": {
-    "build": "bunx tsdown --config tsdown.config.ts",
-    "prepublishOnly": "bun run build"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/open-pencil/open-pencil.git",
-    "directory": "packages/cli"
-  },
   "publishConfig": {
     "access": "public",
     "provenance": true
+  },
+  "scripts": {
+    "build": "bunx tsdown --config tsdown.config.ts",
+    "prepublishOnly": "bun run build"
   },
   "dependencies": {
     "@open-pencil/core": "workspace:*",
@@ -60,6 +60,15 @@
     "@open-pencil/fig": "workspace:*",
     "@open-pencil/package-artifacts-tools": "workspace:*",
     "@open-pencil/test-support": "workspace:*",
+    "@playwright/test": "^1.63.0",
     "@types/bun": "^1.3.14"
+  },
+  "peerDependencies": {
+    "@playwright/test": "^1.63.0"
+  },
+  "peerDependenciesMeta": {
+    "@playwright/test": {
+      "optional": true
+    }
   }
 }

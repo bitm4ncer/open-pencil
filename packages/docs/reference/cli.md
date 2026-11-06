@@ -15,8 +15,8 @@ Show document info — pages, node counts, fonts, file size.
 openpencil info [file] [--json]
 ```
 
-| Option | Description |
-|--------|-------------|
+| Option   | Description    |
+| -------- | -------------- |
 | `--json` | Output as JSON |
 
 ## tree
@@ -27,11 +27,11 @@ Print the node hierarchy.
 openpencil tree [file] [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--page` | Page name (default: first page) |
-| `--depth` | Max depth (default: unlimited) |
-| `--json` | Output as JSON |
+| Option    | Description                     |
+| --------- | ------------------------------- |
+| `--page`  | Page name (default: first page) |
+| `--depth` | Max depth (default: unlimited)  |
+| `--json`  | Output as JSON                  |
 
 ## find
 
@@ -41,13 +41,13 @@ Search nodes by name or type.
 openpencil find [file] [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--name` | Node name (partial match, case-insensitive) |
-| `--type` | Node type: `FRAME`, `TEXT`, `RECTANGLE`, `INSTANCE`, etc. |
-| `--page` | Page name (default: all pages) |
-| `--limit` | Max results (default: 100) |
-| `--json` | Output as JSON |
+| Option    | Description                                               |
+| --------- | --------------------------------------------------------- |
+| `--name`  | Node name (partial match, case-insensitive)               |
+| `--type`  | Node type: `FRAME`, `TEXT`, `RECTANGLE`, `INSTANCE`, etc. |
+| `--page`  | Page name (default: all pages)                            |
+| `--limit` | Max results (default: 100)                                |
+| `--json`  | Output as JSON                                            |
 
 ## node
 
@@ -57,10 +57,10 @@ Show detailed properties of a node.
 openpencil node [file] --id <id> [--json]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--id` | **Required.** Node ID (e.g. `1:23`) |
-| `--json` | Output as JSON |
+| Option   | Description                         |
+| -------- | ----------------------------------- |
+| `--id`   | **Required.** Node ID (e.g. `1:23`) |
+| `--json` | Output as JSON                      |
 
 ## pages
 
@@ -70,8 +70,8 @@ List all pages in the document.
 openpencil pages [file] [--json]
 ```
 
-| Option | Description |
-|--------|-------------|
+| Option   | Description    |
+| -------- | -------------- |
 | `--json` | Output as JSON |
 
 ## variables
@@ -82,11 +82,11 @@ List design variables and collections.
 openpencil variables [file] [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--collection` | Filter by collection name |
-| `--type` | Filter by type: `COLOR`, `FLOAT`, `STRING`, `BOOLEAN` |
-| `--json` | Output as JSON |
+| Option         | Description                                           |
+| -------------- | ----------------------------------------------------- |
+| `--collection` | Filter by collection name                             |
+| `--type`       | Filter by type: `COLOR`, `FLOAT`, `STRING`, `BOOLEAN` |
+| `--json`       | Output as JSON                                        |
 
 ## tokens
 
@@ -96,13 +96,13 @@ Print design variables as a stylesheet of CSS custom properties. Default mode va
 openpencil tokens [file] [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--format` | `css` (default), `tailwind` for a Tailwind v4 `@theme` with a `@custom-variant` per mode, or `dtcg` for W3C design token files |
-| `--out`, `-o` | Folder the `dtcg` files are written to; required for that format |
-| `--collection` | Filter by collection name |
-| `--type` | Filter by type: `COLOR`, `FLOAT`, `STRING`, `BOOLEAN` |
-| `--json` | Output `{ css, tokenCount, issues }` as JSON |
+| Option         | Description                                                                                                                    |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `--format`     | `css` (default), `tailwind` for a Tailwind v4 `@theme` with a `@custom-variant` per mode, or `dtcg` for W3C design token files |
+| `--out`, `-o`  | Folder the `dtcg` files are written to; required for that format                                                               |
+| `--collection` | Filter by collection name                                                                                                      |
+| `--type`       | Filter by type: `COLOR`, `FLOAT`, `STRING`, `BOOLEAN`                                                                          |
+| `--json`       | Output `{ css, tokenCount, issues }` as JSON                                                                                   |
 
 ## export
 
@@ -112,26 +112,26 @@ Export to PNG, JPG, WEBP, SVG, JSX, HTML, `.fig`, or Storybook stories.
 openpencil export [file] [options]
 ```
 
-| Option | Alias | Description |
-|--------|-------|-------------|
-| `--format` | `-f` | `png` (default), `jpg`, `webp`, `svg`, `pdf`, `pptx`, `jsx`, `tailwind-jsx`, `html`, `fig`, `storybook` |
-| `--output` | `-o` | Output file path (default: `<name>.<format>`); a directory for `storybook` (default: `<name>-stories`) |
-| `--scale` | `-s` | Export scale (default: 1) |
-| `--quality` | `-q` | Quality 0–100, JPG/WEBP only (default: 90) |
-| `--page` | | Page name (default: first page; `fig`, `pptx`, and `storybook` default to every page) |
-| `--node` | | Node ID to export (default: all top-level nodes) |
-| `--style` | | JSX style: `openpencil` (default), `tailwind` (same as `-f tailwind-jsx`) |
-| `--html` | | HTML mode: `fragment` (default), `standalone` |
-| `--css` | | HTML CSS output: `inline` (default), `tailwind` |
-| `--assets` | | Standalone HTML assets: `inline` (default), `external` |
-| `--fonts` | | Standalone HTML font output: `assets`, `none` (default) |
-| `--framework` | | Storybook framework: `react` (default), `vue`, `html` |
-| `--design-images` | | Storybook: render a PNG per variant for the Design panel (default: on; `--no-design-images` to skip) |
-| `--watch` | | Storybook: re-export whenever the document is saved |
-| `--beside` | | Storybook: write each document's stories into the document's own folder; the file argument can then be several files or a quoted glob |
-| `--thumbnail` | | Export page thumbnail instead of full render |
-| `--width` | | Thumbnail width (default: 1920) |
-| `--height` | | Thumbnail height (default: 1080) |
+| Option            | Alias | Description                                                                                                                           |
+| ----------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `--format`        | `-f`  | `png` (default), `jpg`, `webp`, `svg`, `pdf`, `pptx`, `jsx`, `tailwind-jsx`, `html`, `fig`, `storybook`                               |
+| `--output`        | `-o`  | Output file path (default: `<name>.<format>`); a directory for `storybook` (default: `<name>-stories`)                                |
+| `--scale`         | `-s`  | Export scale (default: 1)                                                                                                             |
+| `--quality`       | `-q`  | Quality 0–100, JPG/WEBP only (default: 90)                                                                                            |
+| `--page`          |       | Page name (default: first page; `fig`, `pptx`, and `storybook` default to every page)                                                 |
+| `--node`          |       | Node ID to export (default: all top-level nodes)                                                                                      |
+| `--style`         |       | JSX style: `openpencil` (default), `tailwind` (same as `-f tailwind-jsx`)                                                             |
+| `--html`          |       | HTML mode: `fragment` (default), `standalone`                                                                                         |
+| `--css`           |       | HTML CSS output: `inline` (default), `tailwind`                                                                                       |
+| `--assets`        |       | Standalone HTML assets: `inline` (default), `external`                                                                                |
+| `--fonts`         |       | Standalone HTML font output: `assets`, `none` (default)                                                                               |
+| `--framework`     |       | Storybook framework: `react` (default), `vue`, `html`                                                                                 |
+| `--design-images` |       | Storybook: render a PNG per variant for the Design panel (default: on; `--no-design-images` to skip)                                  |
+| `--watch`         |       | Storybook: re-export whenever the document is saved                                                                                   |
+| `--beside`        |       | Storybook: write each document's stories into the document's own folder; the file argument can then be several files or a quoted glob |
+| `--thumbnail`     |       | Export page thumbnail instead of full render                                                                                          |
+| `--width`         |       | Thumbnail width (default: 1920)                                                                                                       |
+| `--height`        |       | Thumbnail height (default: 1080)                                                                                                      |
 
 ## import
 
@@ -139,24 +139,41 @@ Import HTML/CSS/Tailwind into an editable OpenPencil document.
 
 ```sh
 openpencil import page.html [options]
+openpencil import --url https://example.com [options]
 ```
 
-| Option | Alias | Description |
-|--------|-------|-------------|
-| `--format` | `-f` | Output format: `fig` (default), `json` |
-| `--output` | `-o` | Output file path (default: `<name>.<format>`) |
-| `--css` | | CSS file to apply before conversion |
-| `--css-text` | | Inline CSS text to apply before conversion |
-| `--tailwind` | | Tailwind utility candidates to compile and apply |
-| `--tailwind-file` | | File containing Tailwind utility candidates |
-| `--page-name` | | Scene graph page name (default: `DOM/CSS`) |
-| `--json` | | Print a machine-readable summary |
+| Option            | Alias | Description                                                      |
+| ----------------- | ----- | ---------------------------------------------------------------- |
+| `--url`           |       | Capture and import a live http(s) page                           |
+| `--selector`      |       | Capture only the subtree matching this CSS selector              |
+| `--viewport`      |       | Capture viewport as `WIDTHxHEIGHT` (default: `1440x900`)         |
+| `--wait`          |       | Extra milliseconds to wait before capture (default: `500`)       |
+| `--scroll`        |       | Scroll through the page before capture so lazy content loads     |
+| `--executable`    |       | Chromium executable path for the capture                         |
+| `--format`        | `-f`  | Output format: `fig` (default), `json`                           |
+| `--output`        | `-o`  | Output file path (default: `<name>.<format>`, or the URL's host) |
+| `--css`           |       | CSS file to apply before conversion                              |
+| `--css-text`      |       | Inline CSS text to apply before conversion                       |
+| `--tailwind`      |       | Tailwind utility candidates to compile and apply                 |
+| `--tailwind-file` |       | File containing Tailwind utility candidates                      |
+| `--page-name`     |       | Scene graph page name (default: `DOM/CSS`)                       |
+| `--json`          |       | Print a machine-readable summary                                 |
+
+`--url` renders the page in Chromium, inlines its computed styles and assets, and imports the
+result as editable layers. It needs the optional Playwright dependency and a Chromium build:
+
+```sh
+bun add -d @playwright/test
+bunx playwright install chromium
+```
 
 Examples:
 
 ```sh
 openpencil import card.html --css card.css -o card.fig
 openpencil import card.html --tailwind "flex flex-col gap-3 w-80 p-6 rounded-xl bg-white" -o card.fig
+openpencil import --url https://example.com -o example.fig
+openpencil import --url https://example.com --selector main --viewport 1280x800 -o main.fig
 ```
 
 ## eval
@@ -167,14 +184,14 @@ Execute JavaScript with the Figma Plugin API.
 openpencil eval [file] [options]
 ```
 
-| Option | Alias | Description |
-|--------|-------|-------------|
-| `--code` | `-c` | JavaScript code to execute |
-| `--stdin` | | Read code from stdin |
-| `--write` | `-w` | Write changes back to the input file |
-| `--output` | `-o` | Write to a different file |
-| `--json` | | Output as JSON |
-| `--quiet` | `-q` | Suppress output |
+| Option     | Alias | Description                          |
+| ---------- | ----- | ------------------------------------ |
+| `--code`   | `-c`  | JavaScript code to execute           |
+| `--stdin`  |       | Read code from stdin                 |
+| `--write`  | `-w`  | Write changes back to the input file |
+| `--output` | `-o`  | Write to a different file            |
+| `--json`   |       | Output as JSON                       |
+| `--quiet`  | `-q`  | Suppress output                      |
 
 ## analyze colors
 
@@ -184,12 +201,12 @@ Analyze color palette usage across the document.
 openpencil analyze colors [file] [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--limit` | Max colors to show (default: 30) |
+| Option        | Description                                                          |
+| ------------- | -------------------------------------------------------------------- |
+| `--limit`     | Max colors to show (default: 30)                                     |
 | `--threshold` | Distance threshold for clustering similar colors, 0–50 (default: 15) |
-| `--similar` | Show similar color clusters |
-| `--json` | Output as JSON |
+| `--similar`   | Show similar color clusters                                          |
+| `--json`      | Output as JSON                                                       |
 
 ## analyze typography
 
@@ -199,11 +216,11 @@ Analyze font family, size, and weight distribution.
 openpencil analyze typography [file] [options]
 ```
 
-| Option | Description |
-|--------|-------------|
+| Option       | Description                                                     |
+| ------------ | --------------------------------------------------------------- |
 | `--group-by` | Group by: `family`, `size`, `weight` (default: show all styles) |
-| `--limit` | Max styles to show (default: 30) |
-| `--json` | Output as JSON |
+| `--limit`    | Max styles to show (default: 30)                                |
+| `--json`     | Output as JSON                                                  |
 
 ## analyze spacing
 
@@ -213,10 +230,10 @@ Analyze gap and padding values across auto-layout frames.
 openpencil analyze spacing [file] [options]
 ```
 
-| Option | Description |
-|--------|-------------|
+| Option   | Description                                  |
+| -------- | -------------------------------------------- |
 | `--grid` | Base grid size to check against (default: 8) |
-| `--json` | Output as JSON |
+| `--json` | Output as JSON                               |
 
 ## analyze clusters
 
@@ -226,12 +243,12 @@ Find repeated node patterns — potential components.
 openpencil analyze clusters [file] [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--limit` | Max clusters to show (default: 20) |
-| `--min-size` | Min node size in px (default: 30) |
+| Option        | Description                                  |
+| ------------- | -------------------------------------------- |
+| `--limit`     | Max clusters to show (default: 20)           |
+| `--min-size`  | Min node size in px (default: 30)            |
 | `--min-count` | Min instances to form a cluster (default: 2) |
-| `--json` | Output as JSON |
+| `--json`      | Output as JSON                               |
 
 ## diff create
 
@@ -241,12 +258,12 @@ Patch that turns one node tree into another, as JSX attribute changes plus moved
 openpencil diff create [file] --from <id> --to <id> [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--from` | Source node ID |
-| `--to` | Target node ID |
+| Option    | Description                  |
+| --------- | ---------------------------- |
+| `--from`  | Source node ID               |
+| `--to`    | Target node ID               |
 | `--depth` | Max tree depth (default: 10) |
-| `--json` | Output as JSON |
+| `--json`  | Output as JSON               |
 
 ## diff jsx
 
@@ -274,13 +291,13 @@ Apply a patch from `diff create`, `diff show`, or `diff files`. Every node must 
 openpencil diff apply <patch> [file] [options]
 ```
 
-| Option | Alias | Description |
-|--------|-------|-------------|
-| `--dry-run` | | Validate and list changes without applying |
-| `--force` | | Apply even when current values differ from the patch |
-| `--write` | `-w` | Write changes back to the input file |
-| `--output` | `-o` | Write to a different file |
-| `--json` | | Output as JSON |
+| Option      | Alias | Description                                          |
+| ----------- | ----- | ---------------------------------------------------- |
+| `--dry-run` |       | Validate and list changes without applying           |
+| `--force`   |       | Apply even when current values differ from the patch |
+| `--write`   | `-w`  | Write changes back to the input file                 |
+| `--output`  | `-o`  | Write to a different file                            |
+| `--json`    |       | Output as JSON                                       |
 
 Pass `-` as the patch path to read it from stdin.
 
@@ -292,13 +309,13 @@ Pixel diff between two rendered nodes, written as a PNG with changed pixels in r
 openpencil diff visual [file] --from <id> --to <id> --output <png> [options]
 ```
 
-| Option | Alias | Description |
-|--------|-------|-------------|
-| `--output` | `-o` | Diff PNG path |
-| `--scale` | | Render scale before the max-edge limit (default: 1) |
-| `--max-edge` | | Maximum image width or height (default: 1280) |
-| `--threshold` | | Color tolerance 0–1; smaller is stricter (default: 0.1) |
-| `--json` | | Output as JSON |
+| Option        | Alias | Description                                             |
+| ------------- | ----- | ------------------------------------------------------- |
+| `--output`    | `-o`  | Diff PNG path                                           |
+| `--scale`     |       | Render scale before the max-edge limit (default: 1)     |
+| `--max-edge`  |       | Maximum image width or height (default: 1280)           |
+| `--threshold` |       | Color tolerance 0–1; smaller is stricter (default: 0.1) |
+| `--json`      |       | Output as JSON                                          |
 
 ## diff files
 
@@ -308,11 +325,11 @@ Structural diff of two documents, page by page. Pages match by name and nodes by
 openpencil diff files <before> <after> [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--page` | Compare only the page with this name |
+| Option    | Description                                         |
+| --------- | --------------------------------------------------- |
+| `--page`  | Compare only the page with this name                |
 | `--depth` | Max tree depth below each page (default: unlimited) |
-| `--json` | Output as JSON |
+| `--json`  | Output as JSON                                      |
 
 ## documents
 
@@ -327,14 +344,14 @@ openpencil documents close [--save | --discard] [--path <file>] [--document-id <
 openpencil documents activate <document-id> [--page-id <id>] [--json]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--path` | `.fig` path to create or save to; relative to the current directory |
-| `--save` | `close`: save unsaved changes first |
-| `--discard` | `close`: close without saving; unsaved changes are lost |
-| `--document-id` | Target document; defaults to the active tab |
-| `--page-id` | Page to switch the activated document to |
-| `--json` | Output the result and target document as JSON |
+| Option          | Description                                                         |
+| --------------- | ------------------------------------------------------------------- |
+| `--path`        | `.fig` path to create or save to; relative to the current directory |
+| `--save`        | `close`: save unsaved changes first                                 |
+| `--discard`     | `close`: close without saving; unsaved changes are lost             |
+| `--document-id` | Target document; defaults to the active tab                         |
+| `--page-id`     | Page to switch the activated document to                            |
+| `--json`        | Output the result and target document as JSON                       |
 
 ## undo / redo
 
@@ -366,12 +383,12 @@ openpencil tool describe <name> [--json]
 openpencil tool call <name> [file] [options]
 ```
 
-| Option | Alias | Description |
-|--------|-------|-------------|
-| `--args` | | Tool arguments as a JSON object |
-| `--args-file` | | Read arguments from a JSON file, or `-` for stdin |
-| `--write` | `-w` | Headless: write changes back to the input file |
-| `--output` | `-o` | Headless: write changes to a different file |
-| `--document-id` | | App: target document |
-| `--page-id` | | App: target page |
-| `--json` | | Output as JSON |
+| Option          | Alias | Description                                       |
+| --------------- | ----- | ------------------------------------------------- |
+| `--args`        |       | Tool arguments as a JSON object                   |
+| `--args-file`   |       | Read arguments from a JSON file, or `-` for stdin |
+| `--write`       | `-w`  | Headless: write changes back to the input file    |
+| `--output`      | `-o`  | Headless: write changes to a different file       |
+| `--document-id` |       | App: target document                              |
+| `--page-id`     |       | App: target page                                  |
+| `--json`        |       | Output as JSON                                    |

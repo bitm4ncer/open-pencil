@@ -16,6 +16,12 @@ export default defineConfig(
     chunks: 'default',
     // The MCP server ships inside the CLI; Core and CanvasKit are the CLI's dependencies.
     alwaysBundle: ['@open-pencil/mcp', /^@open-pencil\/mcp\//],
-    neverBundle: ['@open-pencil/core', /^@open-pencil\/core\//, 'canvaskit-wasm']
+    neverBundle: [
+      '@open-pencil/core',
+      /^@open-pencil\/core\//,
+      'canvaskit-wasm',
+      // Only the optional --url capture loads Playwright, and only when it is installed.
+      '@playwright/test'
+    ]
   })
 )

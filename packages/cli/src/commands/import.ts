@@ -9,11 +9,18 @@ import { readHTMLDocument, type ReadHTMLResult } from '@open-pencil/core/io/form
 import { requireFile } from '#cli/app/client'
 import { fmtList, ok, printError } from '#cli/format'
 import { writeFigDocument } from '#cli/headless'
+import { captureWebPage } from '#cli/web-import/capture'
 
 const OUTPUT_FORMATS = new Set(['fig', 'json'])
 
 interface ImportArgs {
   file?: string
+  url?: string
+  selector?: string
+  viewport: string
+  wait: string
+  scroll: boolean
+  executable?: string
   output?: string
   format: string
   css?: string
@@ -24,7 +31,21 @@ interface ImportArgs {
   json?: boolean
 }
 
+function parseViewport(value: string): { width: number; height: number } {
+  const match = /^(\d+)x(\d+)$/i.exec(value.trim())
+  if (!match) throw new Error(`Invalid viewport "${value}". Use WIDTHxHEIGHT, such as 1440x900.`)
+  return { width: Number(match[1]), height: Number(match[2]) }
+}
+
+function inputName(args: ImportArgs): string {
+  return args.url ?? requireFile(args.file)
+}
+
 function defaultOutput(input: string, format: string): string {
+  if (/^https?:\/\//i.test(input)) {
+    const host = new URL(input).hostname.replace(/^www\./i, '')
+    return resolve(`${host}.${format}`)
+  }
   const base = basename(input, extname(input))
   return resolve(`${base}.${format}`)
 }
@@ -51,19 +72,37 @@ async function tailwindCandidatesForArgs(args: ImportArgs): Promise<string[] | u
 }
 
 async function importHTML(args: ImportArgs): Promise<ReadHTMLResult> {
+  const cssText = await cssTextForArgs(args)
+  const tailwind = await tailwindCandidatesForArgs(args)
+  if (args.url) {
+    const captured = await captureWebPage({
+      url: args.url,
+      selector: args.selector,
+      viewport: parseViewport(args.viewport),
+      waitMs: Number(args.wait),
+      scroll: args.scroll,
+      executable: args.executable
+    })
+    return readHTMLDocument(captured.html, {
+      baseURL: args.url,
+      cssText,
+      tailwind,
+      pageName: args.pageName
+    })
+  }
   const file = requireFile(args.file)
   return readHTMLDocument(await readTextFile(file), {
     // Relative stylesheets, fonts, and images resolve beside the file, as a browser opening it.
     baseURL: pathToFileURL(resolve(file)).href,
-    cssText: await cssTextForArgs(args),
-    tailwind: await tailwindCandidatesForArgs(args),
+    cssText,
+    tailwind,
     pageName: args.pageName
   })
 }
 
 async function writeOutput(args: ImportArgs, { styled, graph }: ReadHTMLResult) {
   const format = args.format.toLowerCase()
-  const output = args.output ? resolve(args.output) : defaultOutput(requireFile(args.file), format)
+  const output = args.output ? resolve(args.output) : defaultOutput(inputName(args), format)
 
   await mkdir(dirname(output), { recursive: true })
 
@@ -82,7 +121,36 @@ export default defineCommand({
     file: {
       type: 'positional',
       description: 'Input HTML file path',
-      required: true
+      required: false
+    },
+    url: {
+      type: 'string',
+      description: 'Capture and import a live page at an http(s) URL (needs Playwright)',
+      required: false
+    },
+    selector: {
+      type: 'string',
+      description: 'Capture only the subtree matching this CSS selector',
+      required: false
+    },
+    viewport: {
+      type: 'string',
+      description: 'Capture viewport as WIDTHxHEIGHT (default: 1440x900)',
+      default: '1440x900'
+    },
+    wait: {
+      type: 'string',
+      description: 'Extra milliseconds to wait before capture (default: 500)',
+      default: '500'
+    },
+    scroll: {
+      type: 'boolean',
+      description: 'Scroll through the page before capture so lazy content loads'
+    },
+    executable: {
+      type: 'string',
+      description: 'Chromium executable path for the capture',
+      required: false
     },
     output: {
       type: 'string',
@@ -132,12 +200,20 @@ export default defineCommand({
       printError(`Invalid format "${args.format}". Use fig or json.`)
       process.exit(1)
     }
+    if (args.url && args.file) {
+      printError('Pass either an HTML file or --url, not both.')
+      process.exit(1)
+    }
+    if (!args.url && !args.file) {
+      printError('Pass an HTML file or --url.')
+      process.exit(1)
+    }
 
     const imported = await importHTML(args)
     const output = await writeOutput(args, imported)
     const pages = imported.graph.getPages()
     const summary = {
-      input: requireFile(args.file),
+      input: inputName(args),
       output,
       format,
       pages: pages.length,
