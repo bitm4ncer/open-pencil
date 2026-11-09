@@ -43,6 +43,24 @@ export function createToolDescriptors(filesystemEnabled: boolean): ToolDescripto
       enabled: true
     },
     {
+      name: 'list_web_pages',
+      description:
+        'List the same-origin pages a site declares in its sitemap (or links on its home page). Use it before importing several pages.',
+      effect: 'read',
+      availability: 'default',
+      capabilities: ['network:access'],
+      enabled: true
+    },
+    {
+      name: 'import_web_page',
+      description:
+        'Capture a live http(s) page and open it as a new design tab. Keeps computed CSS, images, background images, and web fonts; optionally places a reference screenshot beside the page. The local server needs Playwright and Chromium.',
+      effect: 'write',
+      availability: 'default',
+      capabilities: ['document:write', 'network:access'],
+      enabled: true
+    },
+    {
       name: 'save_file',
       description:
         'Save the current document to a .fig file, or a .jam file for a board. An optional path must stay inside the configured MCP root.',

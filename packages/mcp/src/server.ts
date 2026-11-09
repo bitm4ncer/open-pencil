@@ -15,6 +15,7 @@ import { bearerToken, isAuthorized, mcpRequestToken } from '#mcp/auth'
 import { createBrowserRPCBridge } from '#mcp/browser-rpc'
 import { MCP_CORS_HEADERS, MCP_CORS_METHODS, MCP_EXPOSED_HEADERS } from '#mcp/http-options'
 import type { RPCJSONObject } from '#mcp/json'
+import { registerCaptureRoutes } from '#mcp/server/capture'
 import { registerFileRoutes } from '#mcp/server/files'
 import { createMCPSessionManager, sessionOpener } from '#mcp/server/sessions'
 import { createToolDescriptors } from '#mcp/tool/manifest'
@@ -169,6 +170,9 @@ function createHonoApp(options: {
   })
 
   const requireToken = async (c: Context, next: Next) => {
+    // A browser's CORS preflight carries no Authorization header; let it reach the CORS
+    // middleware below, while the actual request still proves its token.
+    if (c.req.method === 'OPTIONS') return next()
     // When authToken is null (operator explicitly disabled auth), skip token check —
     // the Unix socket or localhost TCP already restricts access to local processes.
     if (authToken !== null) {
@@ -181,6 +185,7 @@ function createHonoApp(options: {
   }
 
   app.use('/rpc', requireToken)
+  registerCaptureRoutes(app, requireToken)
 
   if (fileRoot !== null) {
     app.use('/files/*', requireToken)

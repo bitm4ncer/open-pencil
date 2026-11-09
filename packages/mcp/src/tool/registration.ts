@@ -15,6 +15,7 @@ import { CODEGEN_PROMPT } from '@open-pencil/core/tools'
 
 import type { RPCJSONObject } from '#mcp/json'
 import { MAX_RESULT_BYTES, fail, ok, resultTooLargeMessage } from '#mcp/result'
+import { discoverSitePages } from '#mcp/server/sitemap'
 import { createToolDescriptors, getMCPToolDefinitions } from '#mcp/tool/manifest'
 import type { ToolDescriptor, ToolEffect, ToolPolicy } from '#mcp/tool/metadata'
 import { resolveSafePath, writeToolOutput, writesFileOutput } from '#mcp/tool/output'
@@ -276,6 +277,59 @@ export function registerTools(mcpServer: McpServer, options: RegisterToolsOption
         if (safePath) response.path = safePath.resolved
         if (res.target) response.target = res.target
         return ok(response)
+      } catch (e) {
+        return fail(e)
+      }
+    }
+  )
+
+  register(
+    'list_web_pages',
+    {
+      description:
+        'List the same-origin pages a site declares in its sitemap or links on its home page.',
+      inputSchema: v.strictObject({
+        url: v.pipe(v.string(), v.url(), v.regex(/^https?:\/\//i))
+      })
+    },
+    async (args) => {
+      try {
+        return ok({ url: args.url, pages: await discoverSitePages(args.url) })
+      } catch (e) {
+        return fail(e)
+      }
+    }
+  )
+
+  register(
+    'import_web_page',
+    {
+      description:
+        'Capture a live http(s) page into a new design tab, with its CSS, images, backgrounds, and fonts.',
+      inputSchema: v.strictObject({
+        url: v.pipe(v.string(), v.url(), v.regex(/^https?:\/\//i)),
+        selector: v.optional(v.string()),
+        viewport: v.optional(
+          v.object({
+            width: v.pipe(v.number(), v.integer(), v.minValue(1)),
+            height: v.pipe(v.number(), v.integer(), v.minValue(1))
+          })
+        ),
+        wait: v.optional(v.pipe(v.number(), v.integer(), v.minValue(0))),
+        scroll: v.optional(v.boolean()),
+        reference: v.optional(v.boolean())
+      })
+    },
+    async (args) => {
+      try {
+        const request: Record<string, unknown> = { url: args.url }
+        if (args.selector !== undefined) request.selector = args.selector
+        if (args.viewport !== undefined) request.viewport = args.viewport
+        if (args.wait !== undefined) request.wait = args.wait
+        if (args.scroll !== undefined) request.scroll = args.scroll
+        if (args.reference !== undefined) request.reference = args.reference
+        const res = await sendCommand(sendRPC, 'import_web_page', request)
+        return ok(withTarget({ ...(res.result as RPCJSONObject | undefined) }, res))
       } catch (e) {
         return fail(e)
       }
