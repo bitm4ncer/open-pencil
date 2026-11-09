@@ -8,6 +8,7 @@ import type { Browser, BrowserContext, Locator, Page } from '@playwright/test'
 import { fromUint8Array, isValid, toUint8Array } from 'js-base64'
 
 import { WEB_SVG_ATTRIBUTE } from '@open-pencil/dom-css/scene-graph'
+import type { DesignDocument, DesignLayout, DesignNode } from '@open-pencil/dom-css'
 import type { Rect } from '@open-pencil/scene-graph/primitives'
 
 import type { CapturedSVG } from '#core/io/formats/svg/capture'
@@ -92,6 +93,11 @@ async function loadPlaywright() {
 
 export interface CaptureResult {
   html: string
+  /**
+   * The composed page with resolved styles and captured boxes, so a browser importer can build
+   * its layers without parsing the HTML and laying it out a second time.
+   */
+  document?: DesignDocument
   /** The page's solid background, which the HTML body style alone does not carry into the page. */
   pageBackground?: string
   /** The untouched page as the browser drew it, when `reference` was asked for. */
@@ -395,7 +401,7 @@ function imageMime(url: string, contentType: string | null): string {
 async function inlineRemoteImages(
   context: BrowserContext,
   html: string
-): Promise<{ html: string; inlined: number }> {
+): Promise<{ html: string; inlined: number; replacements: Map<string, string> }> {
   const urls = new Set<string>()
   for (const match of html.matchAll(/<img\b[^>]*\bsrc="(https?:[^"]+)"/gi)) {
     if (match[1]) urls.add(match[1])
@@ -420,13 +426,49 @@ async function inlineRemoteImages(
   })
   let next = html
   let inlined = 0
+  const replacements = new Map<string, string>()
   for (const entry of entries) {
     if (!entry) continue
     const [url, data] = entry
     next = next.split(`src="${url}"`).join(`src="${data}"`)
+    replacements.set(url, data)
     inlined++
   }
-  return { html: next, inlined }
+  return { html: next, inlined, replacements }
+}
+
+/** Applies the browser-context image data URLs and SVG marker remap to the captured model. */
+function applyCapturedAssetReplacements(
+  document: DesignDocument,
+  replacements: ReadonlyMap<string, string>,
+  remap: ReadonlyMap<number, number>
+): void {
+  const replaceURLs = (value: string): string => {
+    let next = value
+    for (const [url, data] of replacements) {
+      if (next.includes(url)) next = next.split(url).join(data)
+    }
+    return next
+  }
+  const walk = (node: DesignNode) => {
+    if (node.type === 'text') return
+    if (node.attrs.src && replacements.has(node.attrs.src)) {
+      node.attrs.src = replacements.get(node.attrs.src) ?? node.attrs.src
+    }
+    const marker = node.attrs[WEB_SVG_ATTRIBUTE]
+    if (marker !== undefined) {
+      const index = Number.parseInt(marker, 10)
+      const remapped = remap.get(index)
+      if (remapped !== undefined) node.attrs[WEB_SVG_ATTRIBUTE] = String(remapped)
+    }
+    if (node.computedStyle) {
+      for (const [property, value] of Object.entries(node.computedStyle)) {
+        if (value.includes('url(')) node.computedStyle[property] = replaceURLs(value)
+      }
+    }
+    for (const child of node.children) walk(child)
+  }
+  for (const child of document.children) walk(child)
 }
 
 /**
@@ -439,11 +481,31 @@ async function pruneHidden(page: Page, selector?: string): Promise<number> {
   return page.evaluate((target) => {
     const root = target ? document.querySelector(target) : document.body
     if (!root) return 0
-    const elements = [...root.querySelectorAll('*')].reverse()
+
+    /** The elements a browser composes: slot assignments, an open shadow root's, or the light DOM's. */
+    function renderedChildren(element: Element): Element[] {
+      let nodes: Node[]
+      if (element instanceof HTMLSlotElement) {
+        const assigned = element.assignedNodes({ flatten: true })
+        nodes = assigned.length > 0 ? assigned : [...element.childNodes]
+      } else {
+        nodes = element.shadowRoot ? [...element.shadowRoot.childNodes] : [...element.childNodes]
+      }
+      return nodes.filter((node): node is Element => node.nodeType === Node.ELEMENT_NODE)
+    }
+
+    const elements: Element[] = []
+    const walk = (element: Element) => {
+      for (const child of renderedChildren(element)) {
+        elements.push(child)
+        walk(child)
+      }
+    }
+    walk(root)
+
     const nonRendered = new Set(['STYLE', 'LINK', 'SCRIPT', 'META', 'TITLE', 'TEMPLATE', 'BASE'])
-    for (const element of elements) {
-      // A stylesheet or script in the body has no box, but removing it would restyle the page
-      // before its computed styles are copied.
+    // Children first: a removed wrapper takes its branch with it.
+    for (const element of elements.reverse()) {
       if (nonRendered.has(element.tagName)) continue
       if (!(element instanceof HTMLElement)) continue
       const style = getComputedStyle(element)
@@ -462,7 +524,14 @@ async function pruneHidden(page: Page, selector?: string): Promise<number> {
       if (box.width > 0 && box.height > 0) continue
       if (element.children.length === 0) element.remove()
     }
-    return root.querySelectorAll('*').length
+
+    let remaining = 0
+    const count = (element: Element) => {
+      remaining++
+      for (const child of renderedChildren(element)) count(child)
+    }
+    count(root)
+    return remaining
   }, selector)
 }
 
@@ -821,6 +890,94 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
           return elements
         }
 
+        function toRect(rect: DOMRectReadOnly, origin: DOMRectReadOnly): Rect {
+          return {
+            x: rect.left - origin.left,
+            y: rect.top - origin.top,
+            width: rect.width,
+            height: rect.height
+          }
+        }
+
+        function hasArea(rect: DOMRectReadOnly): boolean {
+          return rect.width > 0 && rect.height > 0
+        }
+
+        /** Display values whose box flows in a line, so its text belongs to the lines around it. */
+        function isInlineFlow(display: string): boolean {
+          return display === 'inline' || display === 'contents'
+        }
+
+        /** The text nodes an element lays out in its own lines: its own, and its inline descendants'. */
+        function lineTextNodes(element: Element): Text[] {
+          const texts: Text[] = []
+          for (const child of renderedChildNodes(element)) {
+            if (child.nodeType === Node.TEXT_NODE) {
+              if ((child.nodeValue ?? '').trim().length > 0) texts.push(child as Text)
+            } else if (child.nodeType === Node.ELEMENT_NODE) {
+              const childElement = child as Element
+              if (isInlineFlow(getComputedStyle(childElement).display)) {
+                texts.push(...lineTextNodes(childElement))
+              }
+            }
+          }
+          return texts
+        }
+
+        function boundsOf(rects: readonly Rect[]): Rect {
+          const left = Math.min(...rects.map((rect) => rect.x))
+          const top = Math.min(...rects.map((rect) => rect.y))
+          const right = Math.max(...rects.map((rect) => rect.x + rect.width))
+          const bottom = Math.max(...rects.map((rect) => rect.y + rect.height))
+          return { x: left, y: top, width: right - left, height: bottom - top }
+        }
+
+        /** Rects of text on one line overlap vertically by more than half; each line spans its rects. */
+        function groupIntoLines(rects: readonly Rect[]): Rect[] {
+          const lines: Rect[][] = []
+          for (const rect of [...rects].sort((a, b) => a.y - b.y || a.x - b.x)) {
+            const line = lines.find((group) => {
+              const span = boundsOf(group)
+              const overlap =
+                Math.min(span.y + span.height, rect.y + rect.height) - Math.max(span.y, rect.y)
+              return overlap > Math.min(span.height, rect.height) / 2
+            })
+            if (line) line.push(rect)
+            else lines.push([rect])
+          }
+          return lines.map((group) => boundsOf(group))
+        }
+
+        function measureElement(element: Element, origin: DOMRectReadOnly): DesignLayout {
+          const layout: DesignLayout = { box: toRect(element.getBoundingClientRect(), origin) }
+          if (isInlineFlow(getComputedStyle(element).display)) {
+            const fragments = Array.from(element.getClientRects()).filter(hasArea)
+            if (fragments.length > 0) {
+              layout.fragments = fragments.map((rect) => toRect(rect, origin))
+            }
+            return layout
+          }
+          const rects = lineTextNodes(element).flatMap((text) => {
+            const range = element.ownerDocument.createRange()
+            range.selectNodeContents(text)
+            return Array.from(range.getClientRects())
+              .filter(hasArea)
+              .map((rect) => toRect(rect, origin))
+          })
+          const lines = groupIntoLines(rects)
+          if (lines.length > 0) layout.lines = lines
+          return layout
+        }
+
+        function styleRecord(style: CSSStyleDeclaration): Record<string, string> {
+          const record: Record<string, string> = {}
+          for (const property of Array.from(style)) {
+            const value = style.getPropertyValue(property)
+            if (value) record[property] = value
+          }
+          return record
+        }
+
         const sourceElements = renderedElements(root)
         const clone = cloneRendered(root)
         const targetElements = renderedElements(clone)
@@ -972,16 +1129,24 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
           })()
         }
 
+        const styleRecords = new Map<Element, Record<string, string>>()
+        const sourceByTarget = new Map<Element, Element>()
         for (let index = 0; index < sourceElements.length; index++) {
           const source = sourceElements[index]
           const target = targetElements[index] as HTMLElement
           const computed = getComputedStyle(source)
           let css = ''
+          const record: Record<string, string> = {}
           for (const property of computed) {
             const value = computed.getPropertyValue(property)
-            if (value) css += `${property}:${value};`
+            if (value) {
+              css += `${property}:${value};`
+              record[property] = value
+            }
           }
           target.style.cssText = css
+          styleRecords.set(target, record)
+          sourceByTarget.set(target, source)
           target.removeAttribute('class')
           // SVG defs, gradients, and clips are referenced by id, so an inline SVG keeps its ids.
           if (!(target instanceof SVGElement)) target.removeAttribute('id')
@@ -1097,6 +1262,7 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
               style.zIndex === 'auto' ? '' : `z-index:${style.zIndex}`
             ].join(';')
             if (text) overlay.textContent = text
+            styleRecords.set(overlay, styleRecord(overlay.style))
             if (pseudo === '::before') target.prepend(overlay)
             else target.append(overlay)
           }
@@ -1284,6 +1450,25 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
           )
           .join('\n')
 
+        const layoutByTarget = new Map<Element, DesignLayout>()
+        const untransformed = document.createElement('style')
+        untransformed.textContent =
+          '*,*::before,*::after{transform:none!important;translate:none!important;' +
+          'rotate:none!important;scale:none!important;transition:none!important;' +
+          'animation:none!important}'
+        document.head.append(untransformed)
+        try {
+          const origin = root.getBoundingClientRect()
+          for (let index = 0; index < sourceElements.length; index++) {
+            layoutByTarget.set(
+              targetElements[index] as Element,
+              measureElement(sourceElements[index], origin)
+            )
+          }
+        } finally {
+          untransformed.remove()
+        }
+
         clone
           .querySelectorAll('script,link,style,noscript,template,meta,base')
           .forEach((element) => element.remove())
@@ -1306,8 +1491,48 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
         ].find(
           (color) => color && color !== 'transparent' && !/^rgba?\(0,\s*0,\s*0,\s*0\)$/i.test(color)
         )
+
+        /** The composed tree with resolved styles and boxes, without a second HTML parse. */
+        function toDesignNode(node: Node): DesignNode | null {
+          if (node.nodeType === Node.TEXT_NODE) {
+            const text = node.nodeValue ?? ''
+            return text.length > 0 ? { type: 'text', text } : null
+          }
+          if (node.nodeType !== Node.ELEMENT_NODE) return null
+          const element = node as Element
+          const attrs: Record<string, string> = {}
+          for (const attr of Array.from(element.attributes)) {
+            if (attr.name === 'class' || attr.name === 'style') continue
+            attrs[attr.name] = attr.value
+          }
+          const source = sourceByTarget.get(element)
+          if (source instanceof HTMLInputElement) {
+            attrs.value = source.value
+            if (source.checked) attrs.checked = ''
+          } else if (source instanceof HTMLTextAreaElement) {
+            attrs.value = source.value
+          }
+          return {
+            type: 'element',
+            tagName: element.tagName.toLowerCase(),
+            attrs,
+            children: Array.from(element.childNodes)
+              .map(toDesignNode)
+              .filter((child): child is DesignNode => child !== null),
+            computedStyle: styleRecords.get(element),
+            layout: layoutByTarget.get(element)
+          }
+        }
+        const documentModel: DesignDocument = {
+          type: 'document',
+          children: Array.from(clone.childNodes)
+            .map(toDesignNode)
+            .filter((node): node is DesignNode => node !== null)
+        }
+
         return {
           html: `<!doctype html><html><head>${head}</head><body style="${bodyStyle}">${content}</body></html>`,
+          document: documentModel,
           pageBackground,
           stats: { ...stats, stylesheets: stylesheets.length + (links ? 1 : 0) },
           svgs: capturedSVGs
@@ -1325,6 +1550,9 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
     ])
     report('inlining images')
     const remote = await inlineRemoteImages(context, fonts)
+    if (captured.document) {
+      applyCapturedAssetReplacements(captured.document, remote.replacements, resolved.remap)
+    }
     const html =
       resolved.remap.size === captured.svgs.length
         ? remote.html
@@ -1332,6 +1560,7 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
     report('done')
     return {
       html,
+      document: captured.document,
       pageBackground: captured.pageBackground,
       reference,
       svgs: resolved.svgs.length > 0 ? resolved.svgs : undefined,

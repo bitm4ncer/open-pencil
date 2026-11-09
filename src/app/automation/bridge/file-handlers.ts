@@ -14,9 +14,10 @@ import {
   type AutomationTarget
 } from '@/app/automation/bridge/target'
 import { resolveBrowserFileURL } from '@/app/document/io/browser'
+import { readDOMGraphFromDocument } from '@/app/document/io/dom'
 import { documentPathFor } from '@/app/document/io/names'
 import { placeWebImportReference } from '@/app/editor/web-import/reference'
-import { capturedSVGSchema } from '@/app/editor/web-import/schema'
+import { capturedDocumentSchema, capturedSVGSchema } from '@/app/editor/web-import/schema'
 import { openBrowserFileFromURL } from '@/app/shell/menu/files'
 import { openFileFromPath } from '@/app/shell/menu/use'
 import { closeTab, createTab, getActiveStore, getTabById, openFileInNewTab } from '@/app/tabs'
@@ -113,6 +114,7 @@ const importWebArgsSchema = v.object({
 
 const captureResultSchema = v.object({
   html: v.string(),
+  document: v.optional(capturedDocumentSchema),
   pageBackground: v.optional(v.string()),
   reference: v.optional(
     v.object({
@@ -226,9 +228,21 @@ export function createFileHandlers(files?: AutomationFiles) {
     const captured = v.parse(captureResultSchema, body)
     const host = new URL(request.url).hostname.replace(/^www\./i, '') || 'web-page'
     const file = new File([captured.html], `${host}.html`, { type: 'text/html' })
-    const store = await openFileInNewTab(file)
+    const capturedDocument = captured.document
+    const store = await openFileInNewTab(
+      file,
+      undefined,
+      undefined,
+      capturedDocument
+        ? ({ signal, documentName }) =>
+            readDOMGraphFromDocument(capturedDocument, captured.html, {
+              documentName,
+              signal
+            })
+        : undefined
+    )
     const pageColor = applyCapturedPageBackground(store.graph, captured.pageBackground)
-    if (pageColor) store.state.pageColor = pageColor
+    if (pageColor) store.setPageColor(pageColor)
     if (captured.svgs && captured.svgs.length > 0) {
       replaceCapturedSVGImages(store.graph, captured.svgs)
       store.requestRender()

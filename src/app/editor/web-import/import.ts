@@ -6,10 +6,10 @@ import { cloneNodeProps } from '@open-pencil/scene-graph/copy'
 import type { Color } from '@open-pencil/scene-graph/primitives'
 
 import { getAutomationFiles } from '@/app/automation/bridge/server'
-import { readDOMGraph } from '@/app/document/io/dom'
+import { readDOMGraph, readDOMGraphFromDocument } from '@/app/document/io/dom'
 import type { EditorStore } from '@/app/editor/session'
 import { placeWebImportReference } from '@/app/editor/web-import/reference'
-import { capturedSVGSchema } from '@/app/editor/web-import/schema'
+import { capturedDocumentSchema, capturedSVGSchema } from '@/app/editor/web-import/schema'
 import { createDocumentTab, openFileInNewTab } from '@/app/tabs'
 
 export interface WebImportOptions {
@@ -78,6 +78,7 @@ const referenceSchema = v.object({
 
 const capturedPageSchema = v.object({
   html: v.string(),
+  document: v.optional(capturedDocumentSchema),
   pageBackground: v.optional(v.string()),
   reference: v.optional(referenceSchema),
   svgs: v.optional(v.array(capturedSVGSchema))
@@ -129,11 +130,20 @@ export async function importWebPage(
   url: string,
   options: WebImportOptions = {}
 ): Promise<EditorStore> {
-  const { html, pageBackground, reference, svgs } = await capturePage(url, options)
+  const { html, document: capturedDocument, pageBackground, reference, svgs } =
+    await capturePage(url, options)
   options.signal?.throwIfAborted()
   const host = new URL(url).hostname.replace(/^www\./i, '') || 'web-page'
   const name = options.name ?? `${host}.html`
-  const store = await openFileInNewTab(new File([html], name, { type: 'text/html' }))
+  const store = await openFileInNewTab(
+    new File([html], name, { type: 'text/html' }),
+    undefined,
+    undefined,
+    capturedDocument
+      ? ({ signal, documentName }) =>
+          readDOMGraphFromDocument(capturedDocument, html, { documentName, signal })
+      : undefined
+  )
   const pageColor = applyCapturedPageBackground(store.graph, pageBackground)
   if (pageColor) store.setPageColor(pageColor)
   if (svgs && svgs.length > 0) {
@@ -215,7 +225,12 @@ export async function importWebPages(
     options.onProgress?.(index, urls.length, url)
     const page = await capturePage(url, options)
     const path = new URL(url).pathname || '/'
-    const graph = await readDOMGraph(page.html, { documentName: path, signal: options.signal })
+    const graph = page.document
+      ? await readDOMGraphFromDocument(page.document, page.html, {
+          documentName: path,
+          signal: options.signal
+        })
+      : await readDOMGraph(page.html, { documentName: path, signal: options.signal })
     captured.push({ path, page, graph })
   }
   options.signal?.throwIfAborted()
