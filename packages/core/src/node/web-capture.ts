@@ -91,6 +91,54 @@ async function loadPlaywright() {
   }
 }
 
+/**
+ * One Chromium process serves every capture, while each page still gets its own fresh context.
+ * Reusing the process removes the launch cost from a batch; the isolated context keeps cookies,
+ * storage, and cache from leaking between deterministic captures.
+ */
+let browserLease: { key: string; promise: Promise<Browser> } | null = null
+let activeCaptures = 0
+let browserIdleTimer: ReturnType<typeof setTimeout> | null = null
+
+async function acquireBrowser(executable?: string): Promise<Browser> {
+  const key = executable ?? installedChromium() ?? ''
+  if (browserIdleTimer) {
+    clearTimeout(browserIdleTimer)
+    browserIdleTimer = null
+  }
+  if (browserLease && browserLease.key !== key) {
+    const previous = browserLease
+    browserLease = null
+    await previous.promise.then((browser) => browser.close()).catch(() => undefined)
+  }
+  if (!browserLease) {
+    const { chromium } = await loadPlaywright()
+    browserLease = {
+      key,
+      promise: chromium.launch({ headless: true, executablePath: key || undefined })
+    }
+  }
+  const browser = await browserLease.promise
+  if (!browser.isConnected()) {
+    browserLease = null
+    return acquireBrowser(executable)
+  }
+  activeCaptures++
+  return browser
+}
+
+function releaseBrowser(): void {
+  activeCaptures = Math.max(0, activeCaptures - 1)
+  if (activeCaptures > 0) return
+  if (browserIdleTimer) clearTimeout(browserIdleTimer)
+  browserIdleTimer = setTimeout(() => {
+    browserIdleTimer = null
+    const lease = browserLease
+    browserLease = null
+    void lease?.promise.then((browser) => browser.close()).catch(() => undefined)
+  }, 30_000)
+}
+
 export interface CaptureResult {
   html: string
   /**
@@ -118,6 +166,8 @@ export interface CaptureResult {
     fallback?: 'screenshot'
     /** Elements the source page had before the screenshot fallback. */
     sourceElements?: number
+    /** Milliseconds each capture phase took, for measuring speed work. */
+    timings?: Record<string, number>
   }
 }
 
@@ -768,14 +818,19 @@ async function screenshotFallback(
 export async function captureWebPage(args: CaptureOptions): Promise<CaptureResult> {
   let browser: Browser | undefined
   let context: BrowserContext | undefined
+  const started = performance.now()
+  let mark = started
+  const timings: Record<string, number> = {}
+  const lap = (phase: string) => {
+    const now = performance.now()
+    timings[phase] = Math.round(now - mark)
+    mark = now
+  }
   const report = (phase: string, detail?: string) => args.onProgress?.({ phase, detail })
   try {
     report('launching')
-    const { chromium } = await loadPlaywright()
-    browser = await chromium.launch({
-      headless: true,
-      executablePath: args.executable ?? installedChromium()
-    })
+    browser = await acquireBrowser(args.executable)
+    lap('launch')
     context = await browser.newContext({
       viewport: args.viewport,
       deviceScaleFactor: 1,
@@ -784,12 +839,15 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
     const page = await context.newPage()
     report('navigating', args.url)
     await page.goto(args.url, { waitUntil: 'domcontentloaded', timeout: 60_000 })
+    lap('navigate')
     report('settling')
     await settle(page, args.waitMs)
+    lap('settle')
     if (args.scroll) {
       report('scrolling')
       await scrollThrough(page)
       await settle(page, Math.min(args.waitMs, 250))
+      lap('scroll')
     }
     report('dismissing overlays')
     await dismissConsent(page)
@@ -797,6 +855,7 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
     await revealAnimatedContent(page)
     report('rasterizing canvases')
     await rasterizeDynamicContent(page)
+    lap('overlays')
 
     let reference: CaptureResult['reference']
     if (args.reference) {
@@ -829,16 +888,23 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
         console.warn('Could not capture the original page reference:', error)
       }
     }
+    lap('reference')
 
     // A page with tens of thousands of elements cannot be cloned with every computed style; the
     // renderer runs out of memory. Prune what is not painted first; only a page still too large
     // after that falls back to one screenshot.
     report('pruning hidden layers')
     const sourceElements = await pruneHidden(page, args.selector)
+    lap('prune')
     if (sourceElements > MAX_DOM_ELEMENTS) {
+      const fallback = await screenshotFallback(page, sourceElements, args.selector)
       return {
-        ...(await screenshotFallback(page, sourceElements, args.selector)),
-        reference
+        ...fallback,
+        reference,
+        stats: {
+          ...fallback.stats,
+          timings: { ...timings, total: Math.round(performance.now() - started) }
+        }
       }
     }
 
@@ -1540,6 +1606,7 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
       },
       { selector: args.selector, svgAttribute: WEB_SVG_ATTRIBUTE }
     )
+    lap('clone')
 
     report('inlining stylesheets')
     const linked = await inlineLinkedStylesheets(context, captured.html)
@@ -1557,6 +1624,7 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
       resolved.remap.size === captured.svgs.length
         ? remote.html
         : remapSVGMarkers(remote.html, resolved.remap)
+    lap('assets')
     report('done')
     return {
       html,
@@ -1573,11 +1641,12 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
         videos: captured.stats.videos,
         svgs: captured.stats.svgs,
         canvases: captured.stats.canvases,
-        bytes: Buffer.byteLength(html)
+        bytes: Buffer.byteLength(html),
+        timings: { ...timings, total: Math.round(performance.now() - started) }
       }
     }
   } finally {
     await context?.close().catch(() => undefined)
-    await browser?.close().catch(() => undefined)
+    if (browser) releaseBrowser()
   }
 }
