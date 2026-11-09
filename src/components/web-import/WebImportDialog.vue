@@ -57,6 +57,7 @@ const busy = ref(false)
 const discovering = ref(false)
 const progress = ref('')
 const error = ref<string | null>(null)
+const abortController = shallowRef<AbortController | null>(null)
 const refineOpen = ref(false)
 const refineStore = shallowRef<EditorStore | null>(null)
 const refineURL = ref('')
@@ -81,7 +82,28 @@ watch([busy, discovering], ([importing, discoveringPages]) => {
   if (importing || discoveringPages) startElapsed()
   else stopElapsed()
 })
-onUnmounted(stopElapsed)
+watch(webImportOpen, (open) => {
+  if (!open) abortController.value?.abort()
+})
+onUnmounted(() => {
+  stopElapsed()
+  abortController.value?.abort()
+})
+
+/** A close or Escape during a capture cancels it instead of leaving it running unseen. */
+function beginRequest(): AbortSignal {
+  const controller = new AbortController()
+  abortController.value = controller
+  return controller.signal
+}
+
+function aborted(cause: unknown): boolean {
+  return cause instanceof DOMException && cause.name === 'AbortError'
+}
+
+function finishRequest(signal: AbortSignal): void {
+  if (abortController.value?.signal === signal) abortController.value = null
+}
 
 const allSelected = computed(
   () => pages.value.length > 0 && selected.value.length === pages.value.length
@@ -114,15 +136,18 @@ async function discover() {
   if (!target || discovering.value) return
   discovering.value = true
   error.value = null
+  const signal = beginRequest()
   try {
-    pages.value = await discoverWebPages(target)
+    pages.value = await discoverWebPages(target, signal)
+    if (signal.aborted) return
     if (pages.value.length === 0) throw new Error('No pages found in this site’s sitemap.')
     selected.value = [...pages.value]
     step.value = 'pages'
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : String(cause)
+    if (!aborted(cause)) error.value = cause instanceof Error ? cause.message : String(cause)
   } finally {
     discovering.value = false
+    finishRequest(signal)
   }
 }
 
@@ -130,6 +155,7 @@ async function importSelected() {
   if (selected.value.length === 0 || busy.value) return
   busy.value = true
   error.value = null
+  const signal = beginRequest()
   const first = selected.value[0]
   try {
     const store = await importWebPages(selected.value, {
@@ -137,10 +163,12 @@ async function importSelected() {
       wait: 1_500,
       reference: reference.value,
       viewport: viewport.value,
+      signal,
       onProgress: (index, total, page) => {
         progress.value = `Importing ${index + 1}/${total} — ${pagePath(page)}`
       }
     })
+    if (signal.aborted) return
     webImportOpen.value = false
     url.value = ''
     step.value = 'url'
@@ -150,10 +178,11 @@ async function importSelected() {
     refineURL.value = first ?? ''
     refineOpen.value = true
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : String(cause)
+    if (!aborted(cause)) error.value = cause instanceof Error ? cause.message : String(cause)
   } finally {
     busy.value = false
     progress.value = ''
+    finishRequest(signal)
   }
 }
 
@@ -162,22 +191,26 @@ async function importOne() {
   if (!target || busy.value) return
   busy.value = true
   error.value = null
+  const signal = beginRequest()
   try {
     const store = await importWebPage(target, {
       scroll: true,
       wait: 1_500,
       reference: reference.value,
-      viewport: viewport.value
+      viewport: viewport.value,
+      signal
     })
+    if (signal.aborted) return
     webImportOpen.value = false
     url.value = ''
     refineStore.value = store
     refineURL.value = target
     refineOpen.value = true
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : String(cause)
+    if (!aborted(cause)) error.value = cause instanceof Error ? cause.message : String(cause)
   } finally {
     busy.value = false
+    finishRequest(signal)
   }
 }
 

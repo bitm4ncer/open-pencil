@@ -116,3 +116,79 @@ test('imports the pages chosen from a site sitemap as frames', async ({ page }) 
   expect(imported.texts.filter((text) => text === 'Imported heading')).toHaveLength(2)
   canvas.assertNoErrors()
 })
+
+test('cancelling a capture leaves the open document untouched', async ({ page }) => {
+  test.setTimeout(60_000)
+  await page.goto('/?test')
+  const canvas = new CanvasHelper(page)
+  await canvas.waitForInit()
+
+  await page.route('**/capture', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 2_000))
+    await route
+      .fulfill({
+        json: {
+          html: CAPTURED_HTML,
+          pageBackground: 'rgb(255, 255, 255)',
+          svgs: []
+        }
+      })
+      .catch(() => undefined)
+  })
+
+  const before = await page.evaluate(() => window.openPencil?.getStore?.()?.state.documentName)
+
+  await openWebImportDialog(page)
+  await page.getByTestId('web-import-url').fill(PAGE_URL)
+  await page.getByTestId('web-import-submit').click()
+  await page
+    .getByTestId('web-import-dialog')
+    .getByRole('button', { name: 'Cancel' })
+    .click()
+
+  await expect(page.getByTestId('web-import-dialog')).not.toBeVisible()
+  await page.waitForTimeout(3_000)
+  await expect(page.getByTestId('web-import-refine')).not.toBeVisible()
+
+  const after = await page.evaluate(() => window.openPencil?.getStore?.()?.state.documentName)
+  expect(after).toBe(before)
+  canvas.assertNoErrors()
+})
+
+test('a failed page leaves no half-imported document', async ({ page }) => {
+  test.setTimeout(90_000)
+  await page.goto('/?test')
+  const canvas = new CanvasHelper(page)
+  await canvas.waitForInit()
+
+  let captures = 0
+  await page.route('**/sitemap', (route) =>
+    route.fulfill({
+      json: { pages: ['https://example.com/', 'https://example.com/about'] }
+    })
+  )
+  await page.route('**/capture', (route) => {
+    captures++
+    if (captures === 1) {
+      return route.fulfill({
+        json: { html: CAPTURED_HTML, pageBackground: 'rgb(255, 255, 255)', svgs: [] }
+      })
+    }
+    return route.fulfill({ status: 500, json: { error: 'Capture failed' } })
+  })
+
+  const before = await page.evaluate(() => window.openPencil?.getStore?.()?.state.documentName)
+
+  await openWebImportDialog(page)
+  await page.getByTestId('web-import-url').fill(PAGE_URL)
+  await page.getByTestId('web-import-all-pages').check()
+  await page.getByTestId('web-import-submit').click()
+  await expect(page.getByTestId('web-import-page')).toHaveCount(2)
+  await page.getByTestId('web-import-submit').click()
+
+  await expect(page.getByTestId('web-import-dialog')).toContainText('Capture failed')
+  await expect(page.getByTestId('web-import-refine')).not.toBeVisible()
+
+  const after = await page.evaluate(() => window.openPencil?.getStore?.()?.state.documentName)
+  expect(after).toBe(before)
+})

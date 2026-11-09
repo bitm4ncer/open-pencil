@@ -75,6 +75,14 @@
     "valibot": "^1.5.0",
     "ws": "^8.21.3"
   },
+  "peerDependencies": {
+    "@playwright/test": "^1.63.0"
+  },
+  "peerDependenciesMeta": {
+    "@playwright/test": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@open-pencil/package-artifacts-tools": "workspace:*",
     "@open-pencil/test-support": "workspace:*",

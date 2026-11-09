@@ -104,7 +104,7 @@ function linksInHTML(html: string, origin: string): string[] {
   for (const match of html.matchAll(HREF_PATTERN)) {
     const href = match[1]
     if (!href || href.startsWith('#') || href.startsWith('mailto:')) continue
-    const url = sameOrigin(href, origin)
+    const url = sameOrigin(decodeXMLEntities(href), origin)
     if (url) links.push(url)
   }
   return links

@@ -1,5 +1,5 @@
 import type { SceneGraph } from '@open-pencil/scene-graph'
-import { parseColor } from '@open-pencil/scene-graph/color'
+import { tryParseColor } from '@open-pencil/scene-graph/color'
 import type { Color } from '@open-pencil/scene-graph/primitives'
 
 import { setPageBackgrounds } from '#core/figma-api/page-backgrounds'
@@ -7,12 +7,8 @@ import { setPageBackgrounds } from '#core/figma-api/page-backgrounds'
 /** A page's solid background as the browser computed it, or null when it is transparent. */
 export function capturedPageColor(css: string | undefined): Color | null {
   if (!css) return null
-  try {
-    const color = parseColor(css)
-    return color.a > 0 ? color : null
-  } catch {
-    return null
-  }
+  const color = tryParseColor(css)
+  return color && color.a > 0 ? color : null
 }
 
 /**

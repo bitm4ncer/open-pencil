@@ -19,6 +19,8 @@ export interface WebImportOptions {
   reference?: boolean
   viewport?: { width: number; height: number }
   name?: string
+  /** Cancels a capture, a batch, and the document it would have opened. */
+  signal?: AbortSignal
 }
 
 const sitemapSchema = v.object({
@@ -32,9 +34,11 @@ const sitemapSchema = v.object({
  */
 async function postAutomation(
   target: 'capture' | 'sitemap',
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  signal?: AbortSignal
 ): Promise<{ response: Response; body: unknown }> {
   for (let attempt = 0; attempt < 2; attempt++) {
+    signal?.throwIfAborted()
     const files = getAutomationFiles()
     if (!files) {
       throw new Error('Start the local OpenPencil automation server before importing a web page.')
@@ -42,7 +46,8 @@ async function postAutomation(
     const response = await fetch(target === 'capture' ? files.capture : files.sitemap, {
       method: 'POST',
       headers: { ...files.headers, 'content-type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal
     })
     const body: unknown = await response.json().catch(() => null)
     if (response.status !== 401 || attempt === 1) return { response, body }
@@ -54,8 +59,8 @@ async function postAutomation(
 }
 
 /** The same-origin pages a site's sitemap declares, discovered on the local automation server. */
-export async function discoverWebPages(url: string): Promise<string[]> {
-  const { response, body } = await postAutomation('sitemap', { url })
+export async function discoverWebPages(url: string, signal?: AbortSignal): Promise<string[]> {
+  const { response, body } = await postAutomation('sitemap', { url }, signal)
   if (!response.ok) {
     const detail =
       body && typeof body === 'object' && 'error' in body ? String(body.error) : response.statusText
@@ -79,14 +84,18 @@ const capturedPageSchema = v.object({
 })
 
 async function capturePage(url: string, options: WebImportOptions) {
-  const { response, body } = await postAutomation('capture', {
-    url,
-    selector: options.selector,
-    wait: options.wait,
-    scroll: options.scroll,
-    viewport: options.viewport,
-    reference: options.reference
-  })
+  const { response, body } = await postAutomation(
+    'capture',
+    {
+      url,
+      selector: options.selector,
+      wait: options.wait,
+      scroll: options.scroll,
+      viewport: options.viewport,
+      reference: options.reference
+    },
+    options.signal
+  )
   if (!response.ok) {
     const detail =
       body && typeof body === 'object' && 'error' in body ? String(body.error) : response.statusText
@@ -105,8 +114,8 @@ function canvasWidth(): number {
 }
 
 function fitWidth(store: EditorStore, width: number): void {
-  const available = canvasWidth() || window.innerWidth - 520
-  store.state.zoom = Math.min(1, available / Math.max(1, width))
+  const available = Math.max(1, canvasWidth() || window.innerWidth - 520)
+  store.state.zoom = Math.max(0.01, Math.min(1, available / Math.max(1, width)))
   store.state.panX = Math.max(0, (available - width * store.state.zoom) / 2)
   store.state.panY = 0
   store.requestRender()
@@ -121,11 +130,12 @@ export async function importWebPage(
   options: WebImportOptions = {}
 ): Promise<EditorStore> {
   const { html, pageBackground, reference, svgs } = await capturePage(url, options)
+  options.signal?.throwIfAborted()
   const host = new URL(url).hostname.replace(/^www\./i, '') || 'web-page'
   const name = options.name ?? `${host}.html`
   const store = await openFileInNewTab(new File([html], name, { type: 'text/html' }))
   const pageColor = applyCapturedPageBackground(store.graph, pageBackground)
-  if (pageColor) store.state.pageColor = pageColor
+  if (pageColor) store.setPageColor(pageColor)
   if (svgs && svgs.length > 0) {
     replaceCapturedSVGImages(store.graph, svgs)
     store.requestRender()
@@ -185,7 +195,8 @@ function copyPageIntoFrame(
 
 /**
  * Imports chosen pages of one site into a single document: one frame per page, stacked vertically,
- * each with its original screenshot beside it. The pages don't open tabs of their own.
+ * each with its original screenshot beside it. The pages don't open tabs of their own. Every page
+ * is captured before the document is created, so a failed or cancelled batch leaves no half import.
  */
 export async function importWebPages(
   urls: string[],
@@ -194,18 +205,30 @@ export async function importWebPages(
   } = {}
 ): Promise<EditorStore> {
   const host = new URL(urls[0] ?? location.href).hostname.replace(/^www\./i, '') || 'web-page'
+  const captured: Array<{
+    path: string
+    page: Awaited<ReturnType<typeof capturePage>>
+    graph: Awaited<ReturnType<typeof readDOMGraph>>
+  }> = []
+  for (const [index, url] of urls.entries()) {
+    options.signal?.throwIfAborted()
+    options.onProgress?.(index, urls.length, url)
+    const page = await capturePage(url, options)
+    const path = new URL(url).pathname || '/'
+    const graph = await readDOMGraph(page.html, { documentName: path, signal: options.signal })
+    captured.push({ path, page, graph })
+  }
+  options.signal?.throwIfAborted()
+
   const store = createDocumentTab('design').store
   store.state.documentName = host
   store.state.showUI = true
   let y = 0
   let widest = 0
-  for (const [index, url] of urls.entries()) {
-    options.onProgress?.(index, urls.length, url)
-    const { html, pageBackground, reference, svgs } = await capturePage(url, options)
-    const path = new URL(url).pathname || '/'
-    const graph = await readDOMGraph(html, { documentName: path })
+  for (const [index, { path, page, graph }] of captured.entries()) {
+    const { pageBackground, reference, svgs } = page
     const pageColor = applyCapturedPageBackground(graph, pageBackground)
-    if (index === 0 && pageColor) store.state.pageColor = pageColor
+    if (index === 0 && pageColor) store.setPageColor(pageColor)
     if (svgs && svgs.length > 0) replaceCapturedSVGImages(graph, svgs)
     const frame = copyPageIntoFrame(store, graph, `Page — ${path}`, y, pageColor)
     if (reference) {

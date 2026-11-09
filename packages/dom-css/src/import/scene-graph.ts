@@ -55,6 +55,7 @@ import {
   inlineRichText,
   isInlineContent,
   applyParagraphs,
+  preservesWhitespace,
   type CSSCharacterStyle
 } from './text'
 import { cssTransform, type CSSTransforms } from './transform'
@@ -345,7 +346,11 @@ function createTextNode(
   display: string,
   parentFlow: ParentFlow
 ) {
-  const node = graph.createNode('TEXT', parentId, { name: text.slice(0, 32) || 'Text', text })
+  const value = preservesWhitespace(style) ? text : text.trim()
+  const node = graph.createNode('TEXT', parentId, {
+    name: value.slice(0, 32) || 'Text',
+    text: value
+  })
   applyTextStyle(node, style)
   applyFlowSizing(graph, node, style, display, parentFlow)
   return node

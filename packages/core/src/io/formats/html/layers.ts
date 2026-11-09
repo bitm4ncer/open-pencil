@@ -35,13 +35,6 @@ export async function sceneGraphFromStyledHTML(
   const { graph, boxes, transforms } = designDocumentToLayers(styled, {
     pageName: options.pageName
   })
-  // HTML source indentation around block text is not content: a headline that wraps in two
-  // lines otherwise measures the blank lines and spaces around it as three more.
-  for (const node of graph.getAllNodes()) {
-    if (node.type !== 'TEXT' || !node.text) continue
-    const trimmed = node.text.trim()
-    if (trimmed !== node.text) graph.updateNode(node.id, { text: trimmed })
-  }
   const pageIds = graph.getPages().map((page) => page.id)
   await prepareGraphFonts(graph, pageIds)
   layoutAuthoredNodes(graph, pageIds)

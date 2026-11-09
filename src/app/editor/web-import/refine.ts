@@ -7,12 +7,11 @@ import type { EditorStore } from '@/app/editor/session'
  * agent can repair assets, structure, naming, and the page itself with the editor tools.
  */
 export function refineWebImport(store: EditorStore, url: string): void {
-  const host = new URL(url).hostname.replace(/^www\./i, '') || 'web page'
   store.state.showUI = true
   showChatPanel()
   queueChatPrompt(
     `Refine the web import from ${url}.\n\n` +
-      `Compare the imported page with the reference layer "Original — ${host}" and improve the current document:\n` +
+      `Compare the imported page with the reference layer beside it, when one was placed, and improve the current document:\n` +
       '- restore missing images, icons, background media, navigation, and hero media;\n' +
       '- fix text wrapping, font fallbacks, and colors where they differ from the reference;\n' +
       '- organize the layers into a clear hierarchy and give them semantic names;\n' +

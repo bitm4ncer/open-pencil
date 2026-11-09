@@ -48,6 +48,15 @@ describe('reading HTML', () => {
     expect(Math.abs(label.x * 2 + label.width - 390)).toBeLessThanOrEqual(1)
   })
 
+  test('keeps the indentation and lines of preformatted text', async () => {
+    const { graph } = await readHTMLDocument(
+      `<pre style="font-family:'${TEST_FAMILY}';font-size:14px">  first\n    second\n</pre>`
+    )
+    const text = graph.getAllNodes().find((node) => node.type === 'TEXT')
+
+    expect(text?.text).toBe('  first\n    second\n')
+  })
+
   test('trims source indentation around block text', async () => {
     const { graph } = await readHTMLDocument(
       `<h1 style="width:300px;font-family:'${TEST_FAMILY}';font-size:20px;line-height:1.2">

@@ -4,7 +4,7 @@ import { existsSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-import type { Browser, BrowserContext, Page } from '@playwright/test'
+import type { Browser, BrowserContext, Locator, Page } from '@playwright/test'
 import { fromUint8Array, isValid, toUint8Array } from 'js-base64'
 
 import { WEB_SVG_ATTRIBUTE } from '@open-pencil/dom-css/scene-graph'
@@ -627,36 +627,59 @@ function remapSVGMarkers(html: string, remap: Map<number, number>): string {
   })
 }
 
-async function screenshotFallback(page: Page, sourceElements: number): Promise<CaptureResult> {
-  const size = await page.evaluate(() => ({
-    width: Math.max(
-      document.documentElement.scrollWidth,
-      document.body.scrollWidth,
-      window.innerWidth
-    ),
-    height: Math.max(
-      document.documentElement.scrollHeight,
-      document.body.scrollHeight,
-      window.innerHeight
-    ),
-    pageBackground: [
+/** The element a selector names, so a reference or fallback shows what the import shows. */
+async function selectorTarget(
+  page: Page,
+  selector: string | undefined
+): Promise<{ locator: Locator; box: { width: number; height: number } } | null> {
+  if (!selector) return null
+  const locator = page.locator(selector).first()
+  const box = await locator.boundingBox()
+  if (!box || box.width < 1 || box.height < 1) return null
+  return { locator, box }
+}
+
+async function screenshotFallback(
+  page: Page,
+  sourceElements: number,
+  selector?: string
+): Promise<CaptureResult> {
+  const pageBackground = await page.evaluate(() =>
+    [
       getComputedStyle(document.body).backgroundColor,
       getComputedStyle(document.documentElement).backgroundColor
     ].find(
       (color) => color && color !== 'transparent' && !/^rgba?\(0,\s*0,\s*0,\s*0\)$/i.test(color)
     )
-  }))
-  const image = await page.screenshot({
-    fullPage: true,
-    type: 'jpeg',
-    quality: 82,
-    timeout: 120_000
-  })
+  )
+  const target = await selectorTarget(page, selector)
+  const size = target
+    ? { width: Math.round(target.box.width), height: Math.round(target.box.height) }
+    : await page.evaluate(() => ({
+        width: Math.max(
+          document.documentElement.scrollWidth,
+          document.body.scrollWidth,
+          window.innerWidth
+        ),
+        height: Math.max(
+          document.documentElement.scrollHeight,
+          document.body.scrollHeight,
+          window.innerHeight
+        )
+      }))
+  const image = target
+    ? await target.locator.screenshot({ type: 'jpeg', quality: 82, timeout: 120_000 })
+    : await page.screenshot({
+        fullPage: true,
+        type: 'jpeg',
+        quality: 82,
+        timeout: 120_000
+      })
   const data = `data:image/jpeg;base64,${fromUint8Array(image)}`
   const html = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;padding:0}</style></head><body><img alt="Imported page" src="${data}" style="display:block;width:${size.width}px;height:${size.height}px"></body></html>`
   return {
     html,
-    pageBackground: size.pageBackground,
+    pageBackground,
     stats: {
       elements: 1,
       images: 1,
@@ -710,19 +733,24 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
     if (args.reference) {
       report('capturing reference')
       try {
-        const size = await page.evaluate(() => ({
-          width: Math.max(
-            document.documentElement.scrollWidth,
-            document.body.scrollWidth,
-            window.innerWidth
-          ),
-          height: Math.max(
-            document.documentElement.scrollHeight,
-            document.body.scrollHeight,
-            window.innerHeight
-          )
-        }))
-        const image = await page.screenshot({ fullPage: true, type: 'jpeg', quality: 82 })
+        const target = await selectorTarget(page, args.selector)
+        const size = target
+          ? { width: Math.round(target.box.width), height: Math.round(target.box.height) }
+          : await page.evaluate(() => ({
+              width: Math.max(
+                document.documentElement.scrollWidth,
+                document.body.scrollWidth,
+                window.innerWidth
+              ),
+              height: Math.max(
+                document.documentElement.scrollHeight,
+                document.body.scrollHeight,
+                window.innerHeight
+              )
+            }))
+        const image = target
+          ? await target.locator.screenshot({ type: 'jpeg', quality: 82, timeout: 120_000 })
+          : await page.screenshot({ fullPage: true, type: 'jpeg', quality: 82 })
         reference = {
           src: `data:image/jpeg;base64,${fromUint8Array(image)}`,
           width: size.width,
@@ -739,7 +767,10 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
     report('pruning hidden layers')
     const sourceElements = await pruneHidden(page, args.selector)
     if (sourceElements > MAX_DOM_ELEMENTS) {
-      return { ...(await screenshotFallback(page, sourceElements)), reference }
+      return {
+        ...(await screenshotFallback(page, sourceElements, args.selector)),
+        reference
+      }
     }
 
     report('cloning the page')
@@ -1195,8 +1226,14 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
           stats.imagesInlined++
         }
 
-        const sourceCanvases = [...root.querySelectorAll('canvas')]
-        const cloneCanvases = [...clone.querySelectorAll('canvas')]
+        // Pair the canvases in rendered order, as the video and SVG loops do; the clone's shadow
+        // roots are flattened, so querying each tree separately pairs the wrong elements.
+        const sourceCanvases = sourceElements.filter(
+          (element): element is HTMLCanvasElement => element instanceof HTMLCanvasElement
+        )
+        const cloneCanvases = targetElements.filter(
+          (element): element is HTMLCanvasElement => element instanceof HTMLCanvasElement
+        )
         for (let index = 0; index < sourceCanvases.length; index++) {
           const source = sourceCanvases[index]
           const target = cloneCanvases[index] as HTMLElement | undefined

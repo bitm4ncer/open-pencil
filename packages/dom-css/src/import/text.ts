@@ -255,7 +255,7 @@ interface Collector {
   hangingList: boolean | undefined
 }
 
-function preservesWhitespace(style: DesignStyleDeclaration): boolean {
+export function preservesWhitespace(style: DesignStyleDeclaration): boolean {
   const whiteSpace = pickStyle(style, 'white-space')
   return whiteSpace === 'pre' || whiteSpace === 'pre-wrap' || whiteSpace === 'pre-line'
 }

@@ -11,13 +11,12 @@ const viewportSchema = v.object({
 })
 
 const captureRequestSchema = v.object({
-  url: v.pipe(v.string(), v.url()),
+  url: v.pipe(v.string(), v.url(), v.regex(/^https?:\/\//i)),
   selector: v.optional(v.pipe(v.string(), v.maxLength(2_000))),
   viewport: v.optional(viewportSchema),
   wait: v.optional(v.pipe(v.number(), v.integer(), v.minValue(0), v.maxValue(60_000))),
   scroll: v.optional(v.boolean()),
-  reference: v.optional(v.boolean()),
-  executable: v.optional(v.pipe(v.string(), v.maxLength(4_000)))
+  reference: v.optional(v.boolean())
 })
 
 /**
@@ -46,8 +45,7 @@ export function registerCaptureRoutes(app: Hono, requireToken: MiddlewareHandler
         viewport: parsed.output.viewport ?? { width: 1440, height: 900 },
         waitMs: parsed.output.wait ?? 500,
         scroll: parsed.output.scroll ?? false,
-        reference: parsed.output.reference ?? false,
-        executable: parsed.output.executable
+        reference: parsed.output.reference ?? false
       })
       return c.json(result)
     } catch (error) {

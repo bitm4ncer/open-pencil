@@ -99,14 +99,14 @@ const closeArgsSchema = v.object({
 
 const importWebArgsSchema = v.object({
   url: v.pipe(v.string(), v.url(), v.regex(/^https?:\/\//i)),
-  selector: v.optional(v.string()),
+  selector: v.optional(v.pipe(v.string(), v.maxLength(2_000))),
   viewport: v.optional(
     v.object({
-      width: v.pipe(v.number(), v.integer(), v.minValue(1)),
-      height: v.pipe(v.number(), v.integer(), v.minValue(1))
+      width: v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(10_000)),
+      height: v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(10_000))
     })
   ),
-  wait: v.optional(v.pipe(v.number(), v.integer(), v.minValue(0))),
+  wait: v.optional(v.pipe(v.number(), v.integer(), v.minValue(0), v.maxValue(60_000))),
   scroll: v.optional(v.boolean()),
   reference: v.optional(v.boolean())
 })
