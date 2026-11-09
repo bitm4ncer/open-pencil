@@ -8,77 +8,12 @@ import type {
   DesignViewport
 } from '../types'
 import { recordLayout } from './layout'
+import { DEFAULT_COMPUTED_PROPERTIES } from './properties'
 
 export interface BrowserCSSRuntimeOptions {
   document?: Document
   sandbox?: 'shadow-root' | 'iframe'
 }
-
-const DEFAULT_COMPUTED_PROPERTIES = [
-  'align-items',
-  'aspect-ratio',
-  'background-color',
-  'background-image',
-  'border-bottom-color',
-  'border-bottom-style',
-  'border-bottom-left-radius',
-  'border-bottom-right-radius',
-  'border-bottom-width',
-  'border-left-color',
-  'border-left-style',
-  'border-left-width',
-  'border-radius',
-  'border-right-color',
-  'border-right-style',
-  'border-right-width',
-  'border-top-color',
-  'border-top-style',
-  'border-top-left-radius',
-  'border-top-right-radius',
-  'border-top-width',
-  'box-shadow',
-  'box-sizing',
-  'color',
-  'column-gap',
-  'display',
-  'align-self',
-  'bottom',
-  'flex-direction',
-  'flex-wrap',
-  'font-family',
-  'font-size',
-  'font-style',
-  'font-weight',
-  'gap',
-  'height',
-  'justify-content',
-  'letter-spacing',
-  'left',
-  'line-height',
-  'max-height',
-  'max-width',
-  'min-height',
-  'min-width',
-  'object-fit',
-  'opacity',
-  'overflow',
-  'padding-bottom',
-  'padding-left',
-  'padding-right',
-  'padding-top',
-  'position',
-  'right',
-  'row-gap',
-  'text-align',
-  'text-decoration-line',
-  'text-shadow',
-  'text-transform',
-  'top',
-  'transform',
-  'transform-origin',
-  'white-space',
-  'width'
-] as const
 
 function resolveBrowserDocument(documentOverride: Document | undefined): Document {
   if (documentOverride) return documentOverride

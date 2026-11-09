@@ -8,6 +8,7 @@ import type { Browser, BrowserContext, Locator, Page } from '@playwright/test'
 import { fromUint8Array, isValid, toUint8Array } from 'js-base64'
 
 import { WEB_SVG_ATTRIBUTE } from '@open-pencil/dom-css/scene-graph'
+import { CAPTURE_COMPUTED_PROPERTIES } from '@open-pencil/dom-css'
 import type { DesignDocument, DesignLayout, DesignNode } from '@open-pencil/dom-css'
 import type { Rect } from '@open-pencil/scene-graph/primitives'
 
@@ -911,7 +912,7 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
     report('cloning the page')
     const captured = await page.evaluate(
       // oxlint-disable-next-line complexity -- one browser-side walk over the captured DOM
-      async ({ selector, svgAttribute }) => {
+      async ({ selector, svgAttribute, properties }) => {
         const root = selector ? document.querySelector(selector) : document.body
         if (!root) throw new Error(`Selector "${selector}" did not match anything.`)
 
@@ -1023,6 +1024,8 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
             }
             return layout
           }
+          // Most elements carry no text; only text-holding boxes need their line rects.
+          if (!element.textContent?.trim()) return layout
           const rects = lineTextNodes(element).flatMap((text) => {
             const range = element.ownerDocument.createRange()
             range.selectNodeContents(text)
@@ -1203,7 +1206,7 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
           const computed = getComputedStyle(source)
           let css = ''
           const record: Record<string, string> = {}
-          for (const property of computed) {
+          for (const property of properties) {
             const value = computed.getPropertyValue(property)
             if (value) {
               css += `${property}:${value};`
@@ -1604,7 +1607,7 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
           svgs: capturedSVGs
         }
       },
-      { selector: args.selector, svgAttribute: WEB_SVG_ATTRIBUTE }
+      { selector: args.selector, svgAttribute: WEB_SVG_ATTRIBUTE, properties: CAPTURE_COMPUTED_PROPERTIES }
     )
     lap('clone')
 
