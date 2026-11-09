@@ -227,15 +227,51 @@ async function scrollThrough(page: Page) {
   })
 }
 
+/**
+ * Remembers where fixed elements sat in the first stable state. Scrolling can collapse a
+ * hide-on-scroll navigation, and the capture should keep the state the page opened in.
+ */
+async function recordFixedBoxes(page: Page) {
+  await page.evaluate(() => {
+    const boxes = new Map<Element, { x: number; y: number }>()
+    const children = (element: Element): Element[] => {
+      let nodes: Node[]
+      if (element instanceof HTMLSlotElement) {
+        const assigned = element.assignedNodes({ flatten: true })
+        nodes = assigned.length > 0 ? assigned : [...element.childNodes]
+      } else {
+        nodes = element.shadowRoot ? [...element.shadowRoot.childNodes] : [...element.childNodes]
+      }
+      return nodes.filter((node): node is Element => node.nodeType === Node.ELEMENT_NODE)
+    }
+    const walk = (element: Element) => {
+      if (getComputedStyle(element).position === 'fixed') {
+        const rect = element.getBoundingClientRect()
+        boxes.set(element, { x: rect.x, y: rect.y })
+      }
+      for (const child of children(element)) walk(child)
+    }
+    walk(document.body)
+    ;(window as unknown as { __openpencilFixedBoxes?: Map<Element, { x: number; y: number }> })
+      .__openpencilFixedBoxes = boxes
+  })
+}
+
 /** Accepts a cookie banner before the page is cloned or screenshotted. */
 async function dismissConsent(page: Page) {
   const clicked = await page.evaluate(() => {
     const words = [
       'allow all',
+      'allow all cookies',
       'accept all',
+      'accept all cookies',
       'accept',
       'akzeptieren',
       'alle akzeptieren',
+      'alle cookies akzeptieren',
+      'alle cookies erlauben',
+      'cookies erlauben',
+      'erlauben',
       'zustimmen',
       'i agree'
     ]
@@ -282,6 +318,10 @@ export const OVERLAY_DISMISS_LABELS = [
   'allow all',
   'akzeptieren',
   'alle akzeptieren',
+  'alle cookies akzeptieren',
+  'alle cookies erlauben',
+  'cookies erlauben',
+  'erlauben',
   'zustimmen',
   'i agree'
 ] as const
@@ -319,7 +359,27 @@ async function dismissOverlays(page: Page) {
       return false
     }, OVERLAY_DISMISS_LABELS)
   try {
-    if (await dismiss()) await page.waitForTimeout(250)
+    const clicked = await dismiss()
+    if (clicked) await page.waitForTimeout(300)
+    // A consent layer that ignores the click, or fades too slowly to be gone before the clone,
+    // would still cover the page. Remove the layer itself once it is a full-viewport dialog.
+    await page.evaluate(() => {
+      const viewport = window.innerWidth * window.innerHeight
+      for (const element of document.querySelectorAll('body *')) {
+        if (!(element instanceof HTMLElement)) continue
+        const style = getComputedStyle(element)
+        if (style.position !== 'fixed' && style.position !== 'absolute') continue
+        const box = element.getBoundingClientRect()
+        if (box.width * box.height < viewport * 0.5) continue
+        const text = (element.textContent ?? '').toLowerCase()
+        if (!/(cookie|consent|datenschutz|privacy)/.test(text)) continue
+        const looksLikeDialog =
+          element.getAttribute('role') === 'dialog' ||
+          element.getAttribute('aria-modal') === 'true' ||
+          /(^|\s)(modal|consent)(\s|$)/i.test(element.className)
+        if (looksLikeDialog) element.remove()
+      }
+    })
   } catch (error) {
     console.warn('Could not dismiss a page overlay:', error)
   }
@@ -844,15 +904,17 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
     report('settling')
     await settle(page, args.waitMs)
     lap('settle')
+    report('dismissing overlays')
+    await dismissConsent(page)
+    await dismissOverlays(page)
+    report('recording fixed elements')
+    await recordFixedBoxes(page)
     if (args.scroll) {
       report('scrolling')
       await scrollThrough(page)
       await settle(page, Math.min(args.waitMs, 250))
       lap('scroll')
     }
-    report('dismissing overlays')
-    await dismissConsent(page)
-    await dismissOverlays(page)
     await revealAnimatedContent(page)
     report('rasterizing canvases')
     await rasterizeDynamicContent(page)
@@ -912,7 +974,7 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
     report('cloning the page')
     const captured = await page.evaluate(
       // oxlint-disable-next-line complexity -- one browser-side walk over the captured DOM
-      async ({ selector, svgAttribute, properties }) => {
+      async ({ selector, svgAttribute, properties, viewportWidth }) => {
         const root = selector ? document.querySelector(selector) : document.body
         if (!root) throw new Error(`Selector "${selector}" did not match anything.`)
 
@@ -957,6 +1019,37 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
           return elements
         }
 
+        // Fixed elements keep the box they had before scrolling; their descendants move with them.
+        const initialFixedBoxes = (
+          window as unknown as {
+            __openpencilFixedBoxes?: Map<Element, { x: number; y: number }>
+          }
+        ).__openpencilFixedBoxes
+        const nearestFixed = new Map<Element, Element>()
+        const assignFixedAncestors = (element: Element, fixed: Element | undefined) => {
+          const own = getComputedStyle(element).position === 'fixed' ? element : fixed
+          if (own) nearestFixed.set(element, own)
+          for (const child of renderedChildren(element)) assignFixedAncestors(child, own)
+        }
+        assignFixedAncestors(root, undefined)
+
+        /** Read at measurement time: a hide-on-scroll bar may collapse during the async walk. */
+        function fixedOffsetFor(element: Element): { x: number; y: number } {
+          const fixed = nearestFixed.get(element)
+          if (!fixed) return { x: 0, y: 0 }
+          const initial = initialFixedBoxes?.get(fixed)
+          const current = fixed.getBoundingClientRect()
+          let offset = { x: 0, y: 0 }
+          if (initial) {
+            offset = { x: initial.x - current.x, y: initial.y - current.y }
+          } else if (current.bottom <= 0 && current.width >= viewportWidth * 0.5) {
+            // A full-width bar hidden above the viewport is the collapsed state of a
+            // hide-on-scroll navigation; show it where it sat when it was expanded.
+            offset = { x: -current.x, y: -current.y }
+          }
+          return offset
+        }
+
         function toRect(rect: DOMRectReadOnly, origin: DOMRectReadOnly): Rect {
           return {
             x: rect.left - origin.left,
@@ -964,6 +1057,17 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
             width: rect.width,
             height: rect.height
           }
+        }
+
+        function shifted(
+          rect: DOMRectReadOnly,
+          origin: DOMRectReadOnly,
+          offset: { x: number; y: number }
+        ): Rect {
+          const result = toRect(rect, origin)
+          result.x += offset.x
+          result.y += offset.y
+          return result
         }
 
         function hasArea(rect: DOMRectReadOnly): boolean {
@@ -1015,12 +1119,16 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
           return lines.map((group) => boundsOf(group))
         }
 
-        function measureElement(element: Element, origin: DOMRectReadOnly): DesignLayout {
-          const layout: DesignLayout = { box: toRect(element.getBoundingClientRect(), origin) }
+        function measureElement(
+          element: Element,
+          origin: DOMRectReadOnly,
+          offset: { x: number; y: number } = { x: 0, y: 0 }
+        ): DesignLayout {
+          const layout: DesignLayout = { box: shifted(element.getBoundingClientRect(), origin, offset) }
           if (isInlineFlow(getComputedStyle(element).display)) {
             const fragments = Array.from(element.getClientRects()).filter(hasArea)
             if (fragments.length > 0) {
-              layout.fragments = fragments.map((rect) => toRect(rect, origin))
+              layout.fragments = fragments.map((rect) => shifted(rect, origin, offset))
             }
             return layout
           }
@@ -1031,7 +1139,7 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
             range.selectNodeContents(text)
             return Array.from(range.getClientRects())
               .filter(hasArea)
-              .map((rect) => toRect(rect, origin))
+              .map((rect) => shifted(rect, origin, offset))
           })
           const lines = groupIntoLines(rects)
           if (lines.length > 0) layout.lines = lines
@@ -1527,11 +1635,16 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
           'animation:none!important}'
         document.head.append(untransformed)
         try {
-          const origin = root.getBoundingClientRect()
+          // Page boxes are document coordinates. A body that still sits below an overlay would
+          // otherwise shift every layer, and a fixed nav above it would land off the page.
+          const origin = selector
+            ? root.getBoundingClientRect()
+            : new DOMRect(0, 0, window.innerWidth, window.innerHeight)
           for (let index = 0; index < sourceElements.length; index++) {
+            const source = sourceElements[index]
             layoutByTarget.set(
               targetElements[index] as Element,
-              measureElement(sourceElements[index], origin)
+              measureElement(source, origin, fixedOffsetFor(source))
             )
           }
         } finally {
@@ -1599,6 +1712,24 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
             .filter((node): node is DesignNode => node !== null)
         }
 
+        // A fixed header is often a zero-height wrapper around a fixed nav. Hoisting it keeps an
+        // ancestor's clipping or zero box from hiding the navigation the page shows.
+        const fixedNodes: DesignNode[] = []
+        const liftFixed = (node: DesignNode): DesignNode[] => {
+          if (node.type === 'text') return [node]
+          const children = node.children.flatMap(liftFixed)
+          const lifted: DesignNode = { ...node, children }
+          if (node.computedStyle?.position === 'fixed') {
+            fixedNodes.push(lifted)
+            return []
+          }
+          return [lifted]
+        }
+        documentModel.children = [
+          ...documentModel.children.flatMap(liftFixed),
+          ...fixedNodes
+        ]
+
         return {
           html: `<!doctype html><html><head>${head}</head><body style="${bodyStyle}">${content}</body></html>`,
           document: documentModel,
@@ -1607,7 +1738,12 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
           svgs: capturedSVGs
         }
       },
-      { selector: args.selector, svgAttribute: WEB_SVG_ATTRIBUTE, properties: CAPTURE_COMPUTED_PROPERTIES }
+      {
+        selector: args.selector,
+        svgAttribute: WEB_SVG_ATTRIBUTE,
+        properties: CAPTURE_COMPUTED_PROPERTIES,
+        viewportWidth: args.viewport.width
+      }
     )
     lap('clone')
 
