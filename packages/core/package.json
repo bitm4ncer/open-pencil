@@ -186,6 +186,12 @@
       "types": "./dist/node/vite.d.ts",
       "import": "./dist/node/vite.js",
       "default": "./dist/node/vite.js"
+    },
+    "./node/web-capture": {
+      "bun": "./src/node/web-capture.ts",
+      "types": "./dist/node/web-capture.d.ts",
+      "import": "./dist/node/web-capture.js",
+      "default": "./dist/node/web-capture.js"
     }
   },
   "publishConfig": {
@@ -238,6 +244,7 @@
     "opencc-js": "1.4.2",
     "parse5": "^8.0.1",
     "pathe": "^2.0.3",
+    "pdf-lib": "^1.17.1",
     "pixelmatch": "^7.2.0",
     "pptxgenjs": "^4.0.1",
     "rbush": "^4.0.1",
@@ -263,10 +270,14 @@
     "vite": "8.1.4"
   },
   "peerDependencies": {
+    "@playwright/test": "^1.63.0",
     "ai": "^7.0.127",
     "vite": ">=6"
   },
   "peerDependenciesMeta": {
+    "@playwright/test": {
+      "optional": true
+    },
     "ai": {
       "optional": true
     },

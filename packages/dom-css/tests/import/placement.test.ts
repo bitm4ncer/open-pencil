@@ -54,6 +54,60 @@ describe('captured layout in the projection', () => {
     })
   })
 
+  it('gives a one-line heading its words even when an out-of-flow copy sits in it', () => {
+    const hidden = element(
+      'span',
+      { position: 'absolute', width: '1px', height: '1px', overflow: 'hidden' },
+      { box: rect(0, 0, 1, 1) },
+      [{ type: 'text', text: 'Databases, Applications, AI Models' }]
+    )
+    const heading = element(
+      'h1',
+      { 'font-size': '48px' },
+      { box: rect(40, 40, 500, 53), lines: [rect(40, 40, 500, 53)] },
+      [{ type: 'text', text: 'Deploy Fully Managed' }, hidden]
+    )
+    const { graph, boxes } = designDocumentToLayers({ type: 'document', children: [heading] })
+    const headingLayer = graph.getChildren(graph.getPages()[0].id)[0]
+    const text = graph
+      .getChildren(headingLayer.id)
+      .find((child) => child.type === 'TEXT' && child.text === 'Deploy Fully Managed')
+
+    expect(text?.textAutoResize).toBe('WIDTH_AND_HEIGHT')
+    expect(boxes.get(text?.id ?? '')?.lines).toBe(1)
+  })
+
+  it('keeps consecutive inline runs in one text layer beside a block sibling', () => {
+    const link = element(
+      'a',
+      { display: 'inline', color: 'rgb(51, 102, 204)' },
+      { box: rect(80, 0, 40, 20) },
+      [{ type: 'text', text: 'link' }]
+    )
+    const block = element(
+      'div',
+      { display: 'block' },
+      { box: rect(0, 40, 200, 20) },
+      [{ type: 'text', text: 'Recently featured' }]
+    )
+    const container = element(
+      'div',
+      { display: 'block' },
+      { box: rect(0, 0, 200, 60) },
+      [{ type: 'text', text: 'Intro ' }, link, { type: 'text', text: ' outro' }, block]
+    )
+    const { graph } = designDocumentToLayers({ type: 'document', children: [container] })
+    const containerLayer = graph.getChildren(graph.getPages()[0].id)[0]
+    const children = graph.getChildren(containerLayer.id)
+
+    const text = children.find((child) => child.type === 'TEXT' && child.text.startsWith('Intro'))
+    expect(text?.text).toBe('Intro link outro')
+    expect(text?.styleRuns).toHaveLength(1)
+    expect(
+      [...graph.flattenTree(containerLayer.id)].some(({ node }) => node.text === 'Recently featured')
+    ).toBe(true)
+  })
+
   it('records nothing when the layout was not captured', () => {
     const plain: DesignElement = {
       type: 'element',

@@ -70,6 +70,23 @@ test.describe('@open-pencil/dom-css browser layout capture', () => {
     expect(byId(document, 'm').layout?.box).toEqual({ x: 50, y: 0, width: 40, height: 20 })
   })
 
+  test('pairs top-level elements when whitespace text nodes sit between them', async ({ page }) => {
+    // The parser merges adjacent whitespace text nodes, which used to shift every top-level pair.
+    const document = await captured(
+      page,
+      `
+        <header id="h"></header>
+        <main id="m"></main>
+      `,
+      `body { margin: 0 }
+       #h { height: 20px }
+       #m { height: 30px }`
+    )
+
+    expect(byId(document, 'h').layout?.box).toEqual({ x: 0, y: 0, width: 800, height: 20 })
+    expect(byId(document, 'm').layout?.box).toEqual({ x: 0, y: 20, width: 800, height: 30 })
+  })
+
   test('records boxes before transforms and keeps the computed transform', async ({ page }) => {
     const document = await captured(
       page,
@@ -106,7 +123,7 @@ test.describe('@open-pencil/dom-css browser layout capture', () => {
 
   test('waits for web fonts before recording layout', async ({ page }) => {
     const origin = new URL(test.info().project.use.baseURL ?? '').origin
-    const font = `${origin}/@fs${process.cwd()}/packages/core/assets/CaveatVariable.woff2`
+    const font = `${origin}/@fs/${process.cwd().replaceAll('\\', '/')}/packages/core/assets/CaveatVariable.woff2`
     const face = `@font-face { font-family: Hand; src: url(${JSON.stringify(font)}) format('woff2') }`
     const text = 'Handwritten words'
     const document = await captured(

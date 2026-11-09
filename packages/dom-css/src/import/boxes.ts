@@ -41,7 +41,6 @@ const ZERO_LENGTH_PROPERTIES = new Set([
   'border-right-width',
   'border-bottom-width',
   'border-left-width',
-  'border-radius',
   'min-width',
   'min-height',
   'padding',
@@ -84,10 +83,16 @@ function drawsBox(property: string, value: string): boolean {
  * Whether the element draws or sizes a box of its own, so it becomes a layer rather than text in
  * the text around it. Its display counts when it is not its tag's own.
  */
-export function hasBoxStyle(element: DesignElement, style: DesignStyleDeclaration): boolean {
+export function hasBoxStyle(
+  element: DesignElement,
+  style: DesignStyleDeclaration,
+  options: { display?: boolean } = {}
+): boolean {
   const display = pickStyle(style, 'display')
   const shown = display?.replace(/!important/i, '').trim()
-  if (shown !== undefined && shown !== elementDisplay(element, {})) return true
+  if (options.display !== false && shown !== undefined && shown !== elementDisplay(element, {})) {
+    return true
+  }
   return BOX_PROPERTIES.some((property) => {
     const value = pickStyle(style, property)
     return value !== undefined && drawsBox(property, value)

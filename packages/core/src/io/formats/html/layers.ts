@@ -9,6 +9,8 @@ import type { SceneGraph } from '@open-pencil/scene-graph'
 import { layoutAuthoredNodes } from '#core/layout'
 import { prepareGraphFonts } from '#core/text/prepare'
 
+export { applyCapturedPageBackground, capturedPageColor } from './page-background'
+
 /**
  * Placing from captured boxes only turns auto layout off or fixes sizes, so it settles; each
  * pass can expose mismatches the previous layout hid, deeper in the tree.
@@ -33,6 +35,13 @@ export async function sceneGraphFromStyledHTML(
   const { graph, boxes, transforms } = designDocumentToLayers(styled, {
     pageName: options.pageName
   })
+  // HTML source indentation around block text is not content: a headline that wraps in two
+  // lines otherwise measures the blank lines and spaces around it as three more.
+  for (const node of graph.getAllNodes()) {
+    if (node.type !== 'TEXT' || !node.text) continue
+    const trimmed = node.text.trim()
+    if (trimmed !== node.text) graph.updateNode(node.id, { text: trimmed })
+  }
   const pageIds = graph.getPages().map((page) => page.id)
   await prepareGraphFonts(graph, pageIds)
   layoutAuthoredNodes(graph, pageIds)

@@ -7,7 +7,7 @@ import type { CSSComputeOptions, DesignDocument, DesignNode } from '@open-pencil
 import type { SceneGraph, SceneNode } from '@open-pencil/scene-graph'
 import type { Rect } from '@open-pencil/scene-graph/primitives'
 
-const BROWSER_RUNTIME_MODULE = `/@fs${process.cwd()}/packages/dom-css/src/runtime/browser.ts`
+const BROWSER_RUNTIME_MODULE = `/@fs/${process.cwd().replaceAll('\\', '/')}/packages/dom-css/src/runtime/browser.ts`
 const DOM_CSS_BROWSER_MODULE = '/@id/@open-pencil/dom-css/browser'
 
 async function ensureAppPage(page: Page) {
@@ -246,8 +246,17 @@ export async function browserImportedLayers(
       return graph.flattenTree(pageId).flatMap(({ node }) => {
         const box = captured.get(node.name)
         if (!box) return []
-        const position = graph.getAbsolutePosition(node.id)
-        const layer = { x: position.x, y: position.y, width: node.width, height: node.height }
+        // Sum the layout offsets instead of the transformed position: a rotated button's visual
+        // bounds are larger than the box the browser laid it out in, which is what was captured.
+        let x = 0
+        let y = 0
+        let current: SceneNode | undefined = node
+        while (current) {
+          x += current.x
+          y += current.y
+          current = current.parentId ? graph.getNode(current.parentId) : undefined
+        }
+        const layer = { x, y, width: node.width, height: node.height }
         return [{ id: node.name, captured: box, layer }]
       })
     },

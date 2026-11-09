@@ -10,6 +10,7 @@ import {
 } from '@open-pencil/scene-graph/css'
 
 import { DEFAULT_FONT_FAMILY } from '#core/constants'
+import { fontFamilyAliases } from '#core/text/font/aliases'
 import { fontManager } from '#core/text/font/manager'
 import { faceStyleName } from '#core/text/font/names'
 import { collectGraphFontRequirements, collectNodeFontFaces } from '#core/text/requirements/collect'
@@ -239,9 +240,10 @@ export async function registerPageFontFace(face: HTMLEngineFontFace): Promise<vo
   const { buffer, byteOffset, byteLength } = face.bytes
   const data = buffer.slice(byteOffset, byteOffset + byteLength)
   if (!(data instanceof ArrayBuffer)) return
-  await fontManager.markLoaded(
-    face.family,
-    faceStyleName(face.family, face.weight, face.italic),
-    data
+  const style = faceStyleName(face.family, face.weight, face.italic)
+  await Promise.all(
+    fontFamilyAliases(face.family, style).map((alias) =>
+      fontManager.markLoaded(alias.family, alias.style, data)
+    )
   )
 }

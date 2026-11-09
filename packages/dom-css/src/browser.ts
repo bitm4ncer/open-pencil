@@ -10,7 +10,6 @@ import type { CSSComputeOptions, DesignDocument } from './types'
 
 export { Fragment, jsx, jsxs } from './import/jsx/core'
 export type { JSXChild, JSXElementProps, JSXStyleInput, JSXTag } from './import/jsx/core'
-export { parseFontFaceRules, type CSSFontFaceRule } from './import/font-faces'
 
 export interface BrowserToDesignDocumentOptions extends BrowserCSSRuntimeOptions {
   cssText?: string

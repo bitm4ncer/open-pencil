@@ -4,12 +4,17 @@ import { pathToFileURL } from 'node:url'
 
 import { defineCommand } from 'citty'
 
-import { readHTMLDocument, type ReadHTMLResult } from '@open-pencil/core/io/formats/html/import'
+import { applyCapturedPageBackground } from '@open-pencil/core/io/formats/html/layers'
+import {
+  readHTMLDocument,
+  type ReadHTMLResult
+} from '@open-pencil/core/io/formats/html/import'
+import { replaceCapturedSVGImages } from '@open-pencil/core/io/formats/svg'
+import { captureWebPage } from '@open-pencil/core/node/web-capture'
 
 import { requireFile } from '#cli/app/client'
 import { fmtList, ok, printError } from '#cli/format'
 import { writeFigDocument } from '#cli/headless'
-import { captureWebPage } from '#cli/web-import/capture'
 
 const OUTPUT_FORMATS = new Set(['fig', 'json'])
 
@@ -83,12 +88,17 @@ async function importHTML(args: ImportArgs): Promise<ReadHTMLResult> {
       scroll: args.scroll,
       executable: args.executable
     })
-    return readHTMLDocument(captured.html, {
+    const imported = await readHTMLDocument(captured.html, {
       baseURL: args.url,
       cssText,
       tailwind,
       pageName: args.pageName
     })
+    applyCapturedPageBackground(imported.graph, captured.pageBackground)
+    if (captured.svgs && captured.svgs.length > 0) {
+      replaceCapturedSVGImages(imported.graph, captured.svgs)
+    }
+    return imported
   }
   const file = requireFile(args.file)
   return readHTMLDocument(await readTextFile(file), {

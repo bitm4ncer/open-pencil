@@ -13,6 +13,8 @@ export {
   type SVGImportOptions
 } from './import'
 export { isSVGMarkup } from './metadata'
+export type { CapturedSVG } from './capture'
+export { replaceCapturedSVGImages, type WebSVGReplacement } from './web'
 export type { SVGFontAlias, SVGFontRequest } from './defs'
 export type { SVGCharacterEdges, SVGFallbackFace, SVGTextLayout, SVGTextLine } from './text/lines'
 export { svgImportFonts } from './text/import'

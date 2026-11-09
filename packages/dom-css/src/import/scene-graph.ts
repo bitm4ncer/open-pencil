@@ -1,3 +1,4 @@
+// oxlint-disable max-lines -- layer construction and its text grouping share the layer callbacks.
 import { pick } from 'es-toolkit'
 import { isValid, toUint8Array } from 'js-base64'
 
@@ -60,6 +61,22 @@ import { cssTransform, type CSSTransforms } from './transform'
 
 const DOM_CSS_PLUGIN_ID = 'open-pencil-dom-css'
 const IMAGE_SOURCE_URL_KEY = 'image-source-url'
+/**
+ * Marks a captured `<img>` whose raster is a fallback for an SVG the page capture kept, naming
+ * its index in the capture's `svgs`. Web import replaces the layer with the vector it describes.
+ */
+export const WEB_SVG_ATTRIBUTE = 'data-openpencil-svg'
+const WEB_SVG_INDEX_KEY = 'web-svg-index'
+
+/** The capture's SVG index a layer was built from, or null when it is not a captured SVG. */
+export function webSVGIndex(node: Pick<SceneNode, 'pluginData'>): number | null {
+  for (const entry of node.pluginData) {
+    if (entry.pluginId !== DOM_CSS_PLUGIN_ID || entry.key !== WEB_SVG_INDEX_KEY) continue
+    const index = Number.parseInt(entry.value, 10)
+    return Number.isInteger(index) && index >= 0 ? index : null
+  }
+  return null
+}
 
 export interface DesignDocumentToSceneGraphOptions {
   pageName?: string
@@ -153,6 +170,15 @@ function applyImageFill(
   style: DesignStyleDeclaration
 ): void {
   if (element.tagName.toLowerCase() !== 'img') return
+  const svgIndex = element.attrs[WEB_SVG_ATTRIBUTE]
+  // The marker stays on a layer whose image could not be read, so web import can still replace it.
+  if (svgIndex) {
+    node.pluginData.push({
+      pluginId: DOM_CSS_PLUGIN_ID,
+      key: WEB_SVG_INDEX_KEY,
+      value: svgIndex
+    })
+  }
   const source = element.attrs.src
   const bytes = bytesFromDataURL(source)
   if (!bytes) {
@@ -297,7 +323,11 @@ function isPlainElement(element: DesignElement): boolean {
 
 function isInlineElement(element: DesignElement): boolean {
   const style = mergedStyle(element)
-  return elementDisplay(element, style) === 'inline' && !hasBoxStyle(element, style)
+  // An inline wrapper such as a span laid over a div is still text in the line; only a fill,
+  // border, padding, or size makes it a box of its own. The display change is what makes it inline.
+  return (
+    elementDisplay(element, style) === 'inline' && !hasBoxStyle(element, style, { display: false })
+  )
 }
 
 /** Whether the element's children are text in one layer: inline content, or text blocks. */
@@ -402,6 +432,20 @@ function createElementNode(
   return node
 }
 
+/** Whether an element is taken out of the flow, so it does not join the box's lines. */
+function isOutOfFlow(child: DesignNode): boolean {
+  if (child.type !== 'element') return false
+  const position = mergedStyle(child).position
+  return position === 'absolute' || position === 'fixed'
+}
+
+/** Whether a child runs in the surrounding line rather than forming a block of its own. */
+function isInlineRun(child: DesignNode): boolean {
+  if (child.type === 'text') return true
+  if (child.tagName.toLowerCase() === 'br') return true
+  return isInlineElement(child) && isInlineContent(child, isInlineElement)
+}
+
 /**
  * A box's children as layers: blocks of text in its own flow as one text, since a flex box's
  * children are items, or each child as a layer of its own.
@@ -422,13 +466,87 @@ function createChildLayers(
     return
   }
   // Text alone in a box takes the box its lines are in; text among elements has none of its own.
-  const textBox = element.children.every((child) => child.type === 'text')
-    ? capturedTextBox(element)
-    : undefined
-  for (const child of element.children) {
-    const inherited = inheritedTextStyle(element, style)
-    const layer = createDesignNode(graph, node.id, child, flow ?? 'none', recorded, inherited)
-    if (layer?.type === 'TEXT') record(recorded, layer, textBox)
+  // An absolutely positioned decoration, such as the visually hidden copy of a heading, does not
+  // make the text share its line with an element.
+  const flowing = element.children.filter((child) => child.type === 'text' || !isOutOfFlow(child))
+  const textBox =
+    flowing.length > 0 && flowing.every((child) => child.type === 'text')
+      ? capturedTextBox(element)
+      : undefined
+  const inherited = inheritedTextStyle(element, style)
+  // A flex container's children are items, so each keeps its own layer and style.
+  if (flow === 'flex') {
+    for (const child of element.children) {
+      createChildLayer(graph, node.id, child, flow, recorded, inherited, textBox)
+    }
+    return
+  }
+  createInlineRunLayers(graph, node.id, element, flow, recorded, inherited, textBox, flowing)
+}
+
+/** A child's layer, recording the text box the element's lines were measured in. */
+function createChildLayer(
+  graph: SceneGraph,
+  parentId: string,
+  child: DesignNode,
+  flow: FlowKind | null,
+  recorded: Recorded,
+  inherited: DesignStyleDeclaration,
+  textBox: CapturedBox | undefined
+): void {
+  const layer = createDesignNode(graph, parentId, child, flow ?? 'none', recorded, inherited)
+  if (layer?.type === 'TEXT') record(recorded, layer, textBox)
+}
+
+/**
+ * The children of a block in its own flow. Consecutive runs that belong to one line share a text
+ * layer, so words and links stay in the same lines; block siblings keep their own layers.
+ */
+function createInlineRunLayers(
+  graph: SceneGraph,
+  parentId: string,
+  element: DesignElement,
+  flow: FlowKind | null,
+  recorded: Recorded,
+  inherited: DesignStyleDeclaration,
+  textBox: CapturedBox | undefined,
+  flowing: readonly DesignNode[]
+): void {
+  for (let index = 0; index < element.children.length; index++) {
+    const child = element.children[index]
+    if (!isInlineRun(child)) {
+      createChildLayer(graph, parentId, child, flow, recorded, inherited, textBox)
+      continue
+    }
+    const group: DesignNode[] = []
+    while (index < element.children.length && isInlineRun(element.children[index])) {
+      group.push(element.children[index])
+      index++
+    }
+    index--
+    if (!group.some((member) => member.type === 'element' || member.text.trim().length > 0)) {
+      continue
+    }
+    if (group.length === 1 && group[0].type === 'text') {
+      createChildLayer(graph, parentId, group[0], flow, recorded, inherited, textBox)
+      continue
+    }
+    const groupElement: DesignElement = {
+      type: 'element',
+      tagName: 'span',
+      attrs: {},
+      children: group,
+      computedStyle: inherited
+    }
+    const text = createRichTextNode(
+      graph,
+      parentId,
+      groupElement,
+      inherited,
+      flow === 'inline' ? 'inline' : 'block',
+      flow ?? 'none'
+    )
+    if (flowing.every(isInlineRun)) record(recorded, text, textBox)
   }
 }
 

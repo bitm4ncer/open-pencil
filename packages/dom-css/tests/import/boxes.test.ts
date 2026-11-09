@@ -45,6 +45,10 @@ describe('laysOutBoxes', () => {
     expect(laysOut('<span style="background: transparent">Text</span>')).toBe(false)
   })
 
+  it('finds no box in a corner radius alone, which only shapes an existing box', () => {
+    expect(laysOut('<a href="/wiki" style="border-radius: 2px">link</a>')).toBe(false)
+  })
+
   it('finds no box in zero lengths of any unit, or in hidden elements', () => {
     expect(laysOut('<p style="padding: 0rem 0% 0.0px 0em">Text</p>')).toBe(false)
     expect(laysOut('<div style="display: none"><div style="width: 300px">Hidden</div></div>')).toBe(

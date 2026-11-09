@@ -12,6 +12,6 @@ export default defineConfig(
     // Core's modules may run code when imported, so their imports keep their order.
     treeshake: true,
     // The runtime assets module's `?url` imports stay as written, for the host's Vite.
-    neverBundle: [/\?url$/]
+    neverBundle: [/\?url$/, '@playwright/test']
   })
 )

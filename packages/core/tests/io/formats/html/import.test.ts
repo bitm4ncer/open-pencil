@@ -48,6 +48,18 @@ describe('reading HTML', () => {
     expect(Math.abs(label.x * 2 + label.width - 390)).toBeLessThanOrEqual(1)
   })
 
+  test('trims source indentation around block text', async () => {
+    const { graph } = await readHTMLDocument(
+      `<h1 style="width:300px;font-family:'${TEST_FAMILY}';font-size:20px;line-height:1.2">
+        A headline that wraps
+      </h1>`
+    )
+    const text = graph.getAllNodes().find((node) => node.type === 'TEXT')
+
+    expect(text?.text).toBe('A headline that wraps')
+    expect(text?.height).toBeLessThan(40)
+  })
+
   test('a border takes room inside the box, as in a browser', async () => {
     const { graph } = await readHTMLDocument(
       '<div style="display:inline-flex;padding:10px;border:4px solid #000"><div style="width:50px;height:50px;background:#f00"></div></div>'
@@ -206,7 +218,9 @@ describe('reading HTML', () => {
           if (path !== 'once.css') return null
           reads++
           // A second read would lose the rule, as a network that fails the second time does.
-          return reads === 1 ? new TextEncoder().encode('.box { width: 300px; height: 10px }') : null
+          return reads === 1
+            ? new TextEncoder().encode('.box { width: 300px; height: 10px }')
+            : null
         }
       }
     )
@@ -251,4 +265,3 @@ describe('reading HTML', () => {
     expect(families).toEqual([TEST_FAMILY, 'Inter', 'Inter'])
   })
 })
-

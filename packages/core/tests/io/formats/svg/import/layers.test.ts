@@ -3,7 +3,9 @@ import { describe, expect, test } from 'bun:test'
 import { compact } from 'es-toolkit/array'
 
 import { FigmaAPI } from '@open-pencil/core/figma-api'
-import { createSVGNodes } from '@open-pencil/core/io/formats/svg'
+import { createSVGNodes, replaceCapturedSVGImages } from '@open-pencil/core/io/formats/svg'
+import type { DesignDocument } from '@open-pencil/dom-css'
+import { designDocumentToSceneGraph, webSVGIndex } from '@open-pencil/dom-css/scene-graph'
 import { SceneGraph, type SceneNode } from '@open-pencil/scene-graph'
 
 /**
@@ -366,5 +368,80 @@ describe('SVG text imports as the text layers Figma makes', () => {
     )
     expect(root.type).toBe('GROUP')
     expect(texts.map((text) => text.text)).toEqual(['lots of space'])
+  })
+})
+
+const WEB_SVG_PNG =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
+
+function capturedWebPage(): SceneGraph {
+  const document: DesignDocument = {
+    type: 'document',
+    children: [
+      {
+        type: 'element',
+        tagName: 'img',
+        attrs: { src: WEB_SVG_PNG, 'data-openpencil-svg': '0' },
+        children: []
+      }
+    ]
+  }
+  return designDocumentToSceneGraph(document)
+}
+
+function capturedRaster(graph: SceneGraph): SceneNode {
+  const node = graph
+    .flattenTree()
+    .map((entry) => entry.node)
+    .find((candidate) => webSVGIndex(candidate) !== null)
+  if (!node) throw new Error('The captured image has no SVG marker')
+  return node
+}
+
+describe('web capture SVGs replace their raster fallback', () => {
+  test('fits the vector into the captured box, centered with its aspect ratio kept', () => {
+    const graph = capturedWebPage()
+    const raster = capturedRaster(graph)
+    const page = graph.getPages()[0]
+    if (!page) throw new Error('The imported page is missing')
+
+    const result = replaceCapturedSVGImages(graph, [
+      {
+        svg: '<svg viewBox="0 0 10 10"><rect width="10" height="10" fill="#f00"/></svg>',
+        x: 40,
+        y: 20,
+        width: 60,
+        height: 30,
+        name: 'Logo'
+      }
+    ])
+
+    expect(result).toEqual({ replaced: 1, kept: 0 })
+    expect(graph.getNode(raster.id)).toBeUndefined()
+    const root = graph.getChildren(page.id)[0]
+    if (!root) throw new Error('The vector was not placed on the page')
+    expect(root.name).toBe('Logo')
+    // The importer's white frame fill would show behind a transparent page icon.
+    expect(root.fills).toEqual([])
+    // The 10 by 10 SVG scales to the box's height and centers in its width.
+    expect(graph.getAbsoluteBounds(root.id)).toMatchObject({
+      x: 55,
+      y: 20,
+      width: 30,
+      height: 30
+    })
+    expect(graph.getChildren(root.id).length).toBeGreaterThan(0)
+  })
+
+  test('keeps the raster fallback when the captured source is not SVG', () => {
+    const graph = capturedWebPage()
+    const raster = capturedRaster(graph)
+
+    const result = replaceCapturedSVGImages(graph, [
+      { svg: '<div>not svg</div>', x: 40, y: 20, width: 60, height: 30 }
+    ])
+
+    expect(result).toEqual({ replaced: 0, kept: 1 })
+    expect(graph.getNode(raster.id)).toBeDefined()
   })
 })
