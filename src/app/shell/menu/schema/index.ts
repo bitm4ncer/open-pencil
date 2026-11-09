@@ -30,6 +30,11 @@ export const APP_MENU_SCHEMA = [
       { id: 'new-tab', label: 'New Tab', shortcut: 'MOD+T' },
       { id: 'open', label: 'Open…', shortcut: 'MOD+O' },
       { id: 'open-recent', label: 'Open Recent', target: 'native' },
+      {
+        id: 'import-web',
+        label: 'Import from Web…',
+        palette: { keywords: ['url', 'website', 'html', 'capture', 'web'] }
+      },
       { id: 'open-tour', label: 'Open the Tour', handler: 'shell' },
       {
         id: 'diagnostics',

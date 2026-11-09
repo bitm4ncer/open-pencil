@@ -27,6 +27,7 @@ import type {
 import { openTour } from '@/app/demo/document'
 import { donate } from '@/app/donation'
 import { useEditorStore } from '@/app/editor/active-store'
+import { openWebImportDialog } from '@/app/editor/web-import/dialog'
 import { openReportDialog } from '@/app/reports/state'
 import { openSettingsDialog } from '@/app/settings/dialog'
 import {
@@ -185,6 +186,7 @@ export function useAppMenu() {
     new: () => createTab(),
     'new-tab': () => openNewFileTab(),
     open: () => void openFileDialog(),
+    'import-web': () => openWebImportDialog(),
     'open-tour': () => {
       openTour().catch((error: unknown) => console.error('[Tour] Could not open the tour:', error))
     },

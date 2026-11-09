@@ -8,6 +8,7 @@ import {
 } from '@open-pencil/vue/editor/commands'
 
 import { useEditorStore } from '@/app/editor/active-store'
+import { openWebImportDialog } from '@/app/editor/web-import/dialog'
 import { clearRecentFiles, forgetRecentFile, recentLocalFileAt } from '@/app/recent-files'
 import { runFocusedCommand } from '@/app/shell/commands/focused'
 import { createSharedEditorMenuActions } from '@/app/shell/menu/actions/editor'
@@ -73,6 +74,7 @@ export function useEditorMenu() {
     new: () => createTab(),
     'new-tab': () => openNewFileTab(),
     open: () => void openFileDialog(),
+    'import-web': () => openWebImportDialog(),
     close: () => {
       if (activeTab.value) void closeTab(activeTab.value.id)
     },

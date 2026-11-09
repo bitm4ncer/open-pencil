@@ -5,8 +5,10 @@ import {
   HTML_IMPORT_VIEWPORT,
   sceneGraphFromStyledHTML
 } from '@open-pencil/core/io/formats/html/layers'
-import { faceStyleName, fontManager, sfntFont } from '@open-pencil/core/text'
-import { browserHTMLToDesignDocument, parseFontFaceRules } from '@open-pencil/dom-css/browser'
+import { faceStyleName, fontFamilyAliases, fontManager, sfntFont } from '@open-pencil/core/text'
+import { parseFontFaceRules } from '@open-pencil/dom-css'
+import { browserHTMLToDesignDocument } from '@open-pencil/dom-css/browser'
+import type { SceneGraph } from '@open-pencil/scene-graph'
 import { nextFrame } from '@open-pencil/vue/shared/frame'
 
 import { describeDiagnosticError, recordDocumentFailure } from '@/app/diagnostics'
@@ -67,10 +69,13 @@ function dataURLBytes(url: string): ArrayBuffer | null {
   return copy.buffer
 }
 
-async function fontData(url: string): Promise<ArrayBuffer | null> {
+async function fontData(url: string, base: string): Promise<ArrayBuffer | null> {
   if (url.startsWith('data:')) return dataURLBytes(url)
   try {
-    const response = await fetch(url, { credentials: 'include' })
+    const resolved = new URL(url, base)
+    // Captured pages embed their fonts as data URLs; a remote face would be blocked by CORS.
+    if (resolved.origin !== location.origin) return null
+    const response = await fetch(resolved.href, { credentials: 'include' })
     return response.ok ? await response.arrayBuffer() : null
   } catch (error) {
     console.warn('Font request failed:', url, error)
@@ -92,7 +97,10 @@ async function registerPageFonts(html: string, cssText?: string): Promise<void> 
   ].map((link) => link.href)
   const linked = await Promise.allSettled(
     links.map(async (href) => {
-      const response = await fetch(href, { credentials: 'include' })
+      const resolved = new URL(href, base)
+      // A captured page inlines its stylesheets; fetching another origin only logs CORS errors.
+      if (resolved.origin !== location.origin) return ''
+      const response = await fetch(resolved.href, { credentials: 'include' })
       return response.ok ? response.text() : ''
     })
   )
@@ -102,12 +110,18 @@ async function registerPageFonts(html: string, cssText?: string): Promise<void> 
   await Promise.allSettled(
     rules.map(async (rule) => {
       const style = faceStyleName(rule.family, rule.weight, rule.italic)
-      if (fontManager.isStyleLoaded(rule.family, style)) return
+      const aliases = fontFamilyAliases(rule.family, style)
+      if (aliases.every((alias) => fontManager.isStyleLoaded(alias.family, alias.style))) {
+        return
+      }
       for (const source of rule.sources) {
-        const data = await fontData(source)
+        const data = await fontData(source, base)
         if (!data) continue
         try {
-          await fontManager.markLoaded(rule.family, style, await sfntFont(data))
+          const face = await sfntFont(data)
+          await Promise.all(
+            aliases.map((alias) => fontManager.markLoaded(alias.family, alias.style, face))
+          )
           return
         } catch (error) {
           console.warn('Font registration failed:', rule.family, source, error)
@@ -115,6 +129,27 @@ async function registerPageFonts(html: string, cssText?: string): Promise<void> 
       }
     })
   )
+}
+
+/**
+ * Builds a document graph from captured HTML, registering the page's fonts first. Callers that
+ * import several pages into one document use it without opening a tab per page.
+ */
+export async function readDOMGraph(
+  html: string,
+  options: { cssText?: string; documentName?: string; signal?: AbortSignal } = {}
+): Promise<SceneGraph> {
+  await registerPageFonts(html, options.cssText)
+  options.signal?.throwIfAborted()
+  const styled = await browserHTMLToDesignDocument(html, {
+    cssText: options.cssText,
+    signal: options.signal,
+    compute: { layout: true, viewport: HTML_IMPORT_VIEWPORT }
+  })
+  options.signal?.throwIfAborted()
+  return sceneGraphFromStyledHTML(styled, {
+    pageName: options.documentName ?? 'DOM Import'
+  })
 }
 
 export function createDOMOpenActions({
@@ -132,16 +167,12 @@ export function createDOMOpenActions({
     await nextFrame()
     const pageName = options.documentName ?? 'DOM Import'
     load.update({ phase: 'decoding', detail: pageName })
-    await registerPageFonts(html, options.cssText)
-    load.signal.throwIfAborted()
     // Laid out as a browser would, so layers land where the page put its elements.
-    const styled = await browserHTMLToDesignDocument(html, {
+    const graph = await readDOMGraph(html, {
       cssText: options.cssText,
-      signal: load.signal,
-      compute: { layout: true, viewport: HTML_IMPORT_VIEWPORT }
+      documentName: pageName,
+      signal: load.signal
     })
-    load.signal.throwIfAborted()
-    const graph = await sceneGraphFromStyledHTML(styled, { pageName })
     await nextFrame()
     await applyImportedDocument(editor, graph, load)
     // Into a reused tab too, the document opens with the panels its kind starts with.

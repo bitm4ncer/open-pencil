@@ -43,8 +43,17 @@ export function automationFiles(automationURL: string, token: string): Automatio
   const base = new URL(automationURL.replace(/^ws/, 'http'))
   return {
     url: (path) => new URL(`/files/${path.split(/[\\/]/).map(encodeURIComponent).join('/')}`, base),
+    capture: new URL('/capture', base),
+    sitemap: new URL('/sitemap', base),
     headers: { authorization: `Bearer ${token}` }
   }
+}
+
+let connectedFiles: AutomationFiles | null = null
+
+/** The local automation server while this app is connected to it. */
+export function getAutomationFiles(): AutomationFiles | null {
+  return connectedFiles
 }
 
 export function connectAutomation(
@@ -57,9 +66,11 @@ export function connectAutomation(
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined
   let intentionalDisconnect = false
 
+  const files = automationFiles(automationURL, token)
+  connectedFiles = files
   const { handleRequest: handleAutomationRequest } = createAutomationCommandHandlers(
     makeFigmaFromStore,
-    automationFiles(automationURL, token)
+    files
   )
 
   async function handleRequest(_id: string, command: string, args: unknown): Promise<unknown> {
@@ -150,6 +161,7 @@ export function connectAutomation(
     clearTimeout(reconnectTimer)
     ws?.close()
     ws = null
+    if (connectedFiles === files) connectedFiles = null
   }
 
   connect()

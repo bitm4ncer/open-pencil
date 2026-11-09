@@ -33,8 +33,13 @@ type CommandHandler = (target: AutomationTarget, args: unknown) => Promise<unkno
 export function createAutomationCommandHandlers(makeFigma: FigmaFactory, files?: AutomationFiles) {
   const handleEval = createAutomationEvalHandler(makeFigma)
   const handleTool = createAutomationToolHandler(makeFigma)
-  const { handleSaveFile, handleCloseFile, handleNewDocument, handleOpenFile } =
-    createFileHandlers(files)
+  const {
+    handleSaveFile,
+    handleCloseFile,
+    handleNewDocument,
+    handleOpenFile,
+    handleImportWebPage
+  } = createFileHandlers(files)
 
   const commandHandlers: Partial<Record<string, CommandHandler>> = {
     eval: handleEval,
@@ -92,6 +97,7 @@ export function createAutomationCommandHandlers(makeFigma: FigmaFactory, files?:
       const handler = commandHandlers[command]
       if (handler) return handler(resolveAutomationTarget(store, undefined), args)
     }
+    if (command === 'import_web_page') return handleImportWebPage(args)
 
     const rawArgs = isUnknownRecord(args) ? args : {}
     const target = resolveAutomationTarget(store, rawArgs)

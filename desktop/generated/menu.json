@@ -22,6 +22,10 @@
         "label": "Open Recent"
       },
       {
+        "id": "import-web",
+        "label": "Import from Web…"
+      },
+      {
         "id": "open-tour",
         "label": "Open the Tour"
       },

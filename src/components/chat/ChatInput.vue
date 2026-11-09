@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, useTemplateRef } from 'vue'
+import { computed, nextTick, onMounted, useTemplateRef, watch } from 'vue'
 
 import { acpAgentFor } from '@open-pencil/core/constants'
 import { useSelectionState } from '@open-pencil/vue/editor/selection-state'
@@ -7,6 +7,7 @@ import { useI18n } from '@open-pencil/vue/i18n'
 
 import { revokeImagePreviewURL } from '@/app/ai/attachment/image/prepare'
 import { MAX_IMAGE_ATTACHMENTS } from '@/app/ai/attachment/image/types'
+import { pendingChatPrompt, takeChatPrompt } from '@/app/ai/chat/prompt'
 import { takeBackMessages } from '@/app/ai/chat/queue'
 import type { ChatSubmission } from '@/app/ai/chat/submission/types'
 import { useAIChat } from '@/app/ai/chat/use'
@@ -64,6 +65,18 @@ const composer = useTemplateRef<{
   restoreDraft: (text: string) => boolean
   insert: (text: string) => void
 }>('composer')
+
+/** A hand-off such as "Refine with AI" fills the composer once it is on screen. */
+function insertPendingPrompt() {
+  const text = takeChatPrompt()
+  if (text) composer.value?.insert(text)
+}
+onMounted(() => {
+  void nextTick(insertPendingPrompt)
+})
+watch(pendingChatPrompt, () => {
+  void nextTick(insertPendingPrompt)
+})
 
 const completions = useComposerCompletions()
 

@@ -3,6 +3,8 @@ import { mkdir } from '@tauri-apps/plugin-fs'
 import * as v from 'valibot'
 
 import { DOCUMENT_EXTENSIONS } from '@open-pencil/core/io'
+import { applyCapturedPageBackground } from '@open-pencil/core/io/formats/html/layers'
+import { replaceCapturedSVGImages } from '@open-pencil/core/io/formats/svg'
 import { parseToolArgs } from '@open-pencil/core/tools'
 import type { DocumentKind } from '@open-pencil/scene-graph'
 
@@ -13,14 +15,20 @@ import {
 } from '@/app/automation/bridge/target'
 import { resolveBrowserFileURL } from '@/app/document/io/browser'
 import { documentPathFor } from '@/app/document/io/names'
+import { placeWebImportReference } from '@/app/editor/web-import/reference'
+import { capturedSVGSchema } from '@/app/editor/web-import/schema'
 import { openBrowserFileFromURL } from '@/app/shell/menu/files'
 import { openFileFromPath } from '@/app/shell/menu/use'
-import { closeTab, createTab, getActiveStore, getTabById } from '@/app/tabs'
+import { closeTab, createTab, getActiveStore, getTabById, openFileInNewTab } from '@/app/tabs'
 import { isTauri } from '@/app/tauri/env'
 
 /** Where a browser app reads and writes the paths the file tools name: the MCP server's `/files/`. */
 export interface AutomationFiles {
   url: (path: string) => URL
+  /** Where the MCP server captures a live page for an import. */
+  capture: URL
+  /** Where the MCP server discovers a site's pages for a multi-page import. */
+  sitemap: URL
   headers: Record<string, string>
 }
 
@@ -87,6 +95,34 @@ function unsavedDocumentError(store: AutomationTarget['store']): Error {
 const closeArgsSchema = v.object({
   path: v.optional(v.string()),
   unsaved: v.optional(v.picklist(['error', 'save', 'discard']), 'error')
+})
+
+const importWebArgsSchema = v.object({
+  url: v.pipe(v.string(), v.url(), v.regex(/^https?:\/\//i)),
+  selector: v.optional(v.string()),
+  viewport: v.optional(
+    v.object({
+      width: v.pipe(v.number(), v.integer(), v.minValue(1)),
+      height: v.pipe(v.number(), v.integer(), v.minValue(1))
+    })
+  ),
+  wait: v.optional(v.pipe(v.number(), v.integer(), v.minValue(0))),
+  scroll: v.optional(v.boolean()),
+  reference: v.optional(v.boolean())
+})
+
+const captureResultSchema = v.object({
+  html: v.string(),
+  pageBackground: v.optional(v.string()),
+  reference: v.optional(
+    v.object({
+      src: v.string(),
+      width: v.pipe(v.number(), v.minValue(1)),
+      height: v.pipe(v.number(), v.minValue(1))
+    })
+  ),
+  svgs: v.optional(v.array(capturedSVGSchema)),
+  stats: v.optional(v.unknown())
 })
 
 export async function ensureTauriParentDirectory(path: string): Promise<void> {
@@ -171,6 +207,36 @@ export function createFileHandlers(files?: AutomationFiles) {
     return responseWithTarget({ ok: true, result: { created: true } }, target)
   }
 
+  async function handleImportWebPage(args: unknown): Promise<unknown> {
+    if (!files) throw new Error('Importing a web page needs the local OpenPencil automation server')
+    const request = parseToolArgs('import_web_page', importWebArgsSchema, args)
+    const response = await fetch(files.capture, {
+      method: 'POST',
+      headers: { ...files.headers, 'content-type': 'application/json' },
+      body: JSON.stringify(request)
+    })
+    const body: unknown = await response.json().catch(() => null)
+    if (!response.ok) {
+      const error =
+        body && typeof body === 'object' && 'error' in body
+          ? String(body.error)
+          : response.statusText
+      throw new Error(`Could not import ${request.url}: ${error}`)
+    }
+    const captured = v.parse(captureResultSchema, body)
+    const host = new URL(request.url).hostname.replace(/^www\./i, '') || 'web-page'
+    const file = new File([captured.html], `${host}.html`, { type: 'text/html' })
+    const store = await openFileInNewTab(file)
+    const pageColor = applyCapturedPageBackground(store.graph, captured.pageBackground)
+    if (pageColor) store.state.pageColor = pageColor
+    if (captured.svgs && captured.svgs.length > 0) {
+      replaceCapturedSVGImages(store.graph, captured.svgs)
+      store.requestRender()
+    }
+    if (captured.reference) await placeWebImportReference(store, host, captured.reference)
+    return { ok: true, result: { opened: true, url: request.url, name: host } }
+  }
+
   async function handleOpenFile(_target: AutomationTarget, args: unknown): Promise<unknown> {
     const path = (args as { path?: string }).path
     if (!path) throw new Error('Missing "path" in args')
@@ -187,5 +253,11 @@ export function createFileHandlers(files?: AutomationFiles) {
     return responseWithTarget({ ok: true, result: { opened: true } }, target)
   }
 
-  return { handleSaveFile, handleCloseFile, handleNewDocument, handleOpenFile }
+  return {
+    handleSaveFile,
+    handleCloseFile,
+    handleNewDocument,
+    handleOpenFile,
+    handleImportWebPage
+  }
 }

@@ -1,0 +1,118 @@
+import { expect, test, type Page } from '@playwright/test'
+
+import { CanvasHelper } from '#tests/helpers/canvas'
+
+const PAGE_URL = 'https://example.com/'
+
+const CAPTURED_HTML = `<!doctype html><html><head><meta charset="utf-8">
+<style>html,body{margin:0;padding:0}</style></head>
+<body><h1 style="margin:0;font:700 40px sans-serif;color:#111111">Imported heading</h1></body></html>`
+
+/** A one-pixel PNG, enough for the reference layer's image fill to decode. */
+const REFERENCE_PNG =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
+
+async function openWebImportDialog(page: Page): Promise<void> {
+  await page.getByTestId('menubar-file').click()
+  await page.getByRole('menuitem', { name: /Import from Web/ }).click()
+}
+
+test('imports a page with its reference image from the File menu', async ({ page }) => {
+  test.setTimeout(60_000)
+  await page.goto('/?test')
+  const canvas = new CanvasHelper(page)
+  await canvas.waitForInit()
+
+  // The dialog renders pages on the local automation server; the test answers for it.
+  await page.route('**/capture', (route) =>
+    route.fulfill({
+      json: {
+        html: CAPTURED_HTML,
+        pageBackground: 'rgb(255, 255, 255)',
+        reference: { src: REFERENCE_PNG, width: 320, height: 200 },
+        svgs: []
+      }
+    })
+  )
+
+  await openWebImportDialog(page)
+  await expect(page.getByTestId('web-import-dialog')).toBeVisible()
+  await page.getByTestId('web-import-url').fill(PAGE_URL)
+  await page.getByTestId('web-import-submit').click()
+
+  await expect(page.getByTestId('web-import-refine')).toBeVisible({ timeout: 30_000 })
+
+  const imported = await page.evaluate(() => {
+    const store = window.openPencil?.getStore?.()
+    if (!store) throw new Error('OpenPencil store not initialized')
+    const nodes = [...store.graph.getAllNodes()]
+    return {
+      documentName: store.state.documentName,
+      texts: nodes
+        .filter((node) => node.type === 'TEXT')
+        .map((node) => node.text.trim())
+        .filter((text) => text.length > 0),
+      imageLayers: nodes.filter(
+        (node) => node.type === 'RECTANGLE' && node.fills.some((fill) => fill.type === 'IMAGE')
+      ).length,
+      pageBackground: store.state.pageColor
+    }
+  })
+
+  expect(imported.documentName).toContain('example.com')
+  expect(imported.texts).toContain('Imported heading')
+  expect(imported.imageLayers).toBe(1)
+  expect(imported.pageBackground).toMatchObject({ r: 1, g: 1, b: 1, a: 1 })
+  canvas.assertNoErrors()
+})
+
+test('imports the pages chosen from a site sitemap as frames', async ({ page }) => {
+  test.setTimeout(90_000)
+  await page.goto('/?test')
+  const canvas = new CanvasHelper(page)
+  await canvas.waitForInit()
+
+  await page.route('**/sitemap', (route) =>
+    route.fulfill({
+      json: { pages: ['https://example.com/', 'https://example.com/about'] }
+    })
+  )
+  await page.route('**/capture', (route) =>
+    route.fulfill({
+      json: {
+        html: CAPTURED_HTML,
+        pageBackground: 'rgb(255, 255, 255)',
+        svgs: []
+      }
+    })
+  )
+
+  await openWebImportDialog(page)
+  await page.getByTestId('web-import-url').fill(PAGE_URL)
+  await page.getByTestId('web-import-all-pages').check()
+  await page.getByTestId('web-import-submit').click()
+
+  await expect(page.getByTestId('web-import-page')).toHaveCount(2)
+  await page.getByTestId('web-import-submit').click()
+
+  await expect(page.getByTestId('web-import-refine')).toBeVisible({ timeout: 60_000 })
+
+  const imported = await page.evaluate(() => {
+    const store = window.openPencil?.getStore?.()
+    if (!store) throw new Error('OpenPencil store not initialized')
+    const nodes = [...store.graph.getAllNodes()]
+    return {
+      frames: store.graph
+        .getChildren(store.state.currentPageId)
+        .filter((node) => node.type === 'FRAME').length,
+      texts: nodes
+        .filter((node) => node.type === 'TEXT')
+        .map((node) => node.text.trim())
+        .filter((text) => text.length > 0)
+    }
+  })
+
+  expect(imported.frames).toBe(2)
+  expect(imported.texts.filter((text) => text === 'Imported heading')).toHaveLength(2)
+  canvas.assertNoErrors()
+})
