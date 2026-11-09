@@ -15,7 +15,8 @@ import {
   num,
   opacityValue,
   presentationFor,
-  presentationVisible
+  presentationVisible,
+  styleRulesFrom
 } from './svg/presentation'
 import { elementLayer, type Scope, type Traversal } from './svg/scope'
 import { textInfo } from './svg/text'
@@ -187,7 +188,8 @@ function collectClipPath(
       clipPaths: [],
       elements: [],
       useStack: new Set([target]),
-      referenced: true
+      referenced: true,
+      styleRules: traversal.styleRules
     },
     traversal,
     paths
@@ -201,7 +203,9 @@ function collectClipPath(
       visible: isSVGPathShown(path)
     })),
     units,
-    visible: presentationVisible(presentationFor(target, DEFAULT_PRESENTATION))
+    visible: presentationVisible(
+      presentationFor(target, DEFAULT_PRESENTATION, traversal.styleRules)
+    )
   }
 }
 
@@ -220,7 +224,7 @@ function collectPaths(
   const clip = ownClipPath ? clipPaths.length - 1 : null
   const scope: Scope = {
     ...inherited,
-    presentation: presentationFor(element, inherited.presentation),
+    presentation: presentationFor(element, inherited.presentation, inherited.styleRules),
     transform,
     clipPaths
   }
@@ -287,7 +291,13 @@ function collectDocument(root: Element): SVGContent {
     if (id) elementsById.set(id, element)
   }
   const paths: IconPathInfo[] = []
-  const traversal: Traversal = { root, elementsById, nextKey: 0, texts: [] }
+  const traversal: Traversal = {
+    root,
+    elementsById,
+    styleRules: styleRulesFrom(root),
+    nextKey: 0,
+    texts: []
+  }
   collectPaths(
     root,
     {
@@ -296,7 +306,8 @@ function collectDocument(root: Element): SVGContent {
       clipPaths: [],
       elements: [],
       useStack: new Set(),
-      referenced: false
+      referenced: false,
+      styleRules: traversal.styleRules
     },
     traversal,
     paths

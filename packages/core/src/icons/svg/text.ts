@@ -105,7 +105,7 @@ export function collectTextPieces(element: Element, scope: Scope): SVGTextPiece[
         continue
       }
       if (!isElement(child) || (child.localName || child.tagName) !== 'tspan') continue
-      const style = presentationFor(child, presentation)
+      const style = presentationFor(child, presentation, scope.styleRules)
       if (MOVES.some((name) => child.hasAttribute(name))) {
         pieces.push(current)
         current = {

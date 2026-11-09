@@ -7,6 +7,7 @@ import { createSVGNodes, replaceCapturedSVGImages } from '@open-pencil/core/io/f
 import type { DesignDocument } from '@open-pencil/dom-css'
 import { designDocumentToSceneGraph, webSVGIndex } from '@open-pencil/dom-css/scene-graph'
 import { SceneGraph, type SceneNode } from '@open-pencil/scene-graph'
+import { parseColor } from '@open-pencil/scene-graph/color'
 
 /**
  * Each tree is what Figma 126 built from the same markup, pasted as text and through
@@ -36,6 +37,20 @@ function layerTree(svg: string): string[] {
 }
 
 describe('SVG import builds the layers Figma does', () => {
+  test('applies the fills a <style> block declares for a class', () => {
+    const graph = new SceneGraph()
+    const root = createSVGNodes(
+      graph,
+      graph.getPages()[0].id,
+      '<svg width="20" height="20" viewBox="0 0 20 20"><style>.red{fill:#d50c2d}.white{fill:#ffffff}</style><rect class="red" width="20" height="20"/><rect class="white" x="2" y="2" width="4" height="4"/></svg>'
+    )
+    if (!root) throw new Error('Nothing imported')
+    const [red, white] = graph.getChildren(root.id)
+
+    expect(red?.fills[0]).toMatchObject({ type: 'SOLID', color: parseColor('#d50c2d') })
+    expect(white?.fills[0]).toMatchObject({ type: 'SOLID', color: parseColor('#ffffff') })
+  })
+
   test('groups per <g>, a vector per shape, named by id', () => {
     expect(
       layerTree(`<svg viewBox="0 0 120 80" width="120" height="80">

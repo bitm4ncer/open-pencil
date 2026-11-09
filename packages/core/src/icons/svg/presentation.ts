@@ -57,6 +57,78 @@ export function inlineStyles(element: Element): ReadonlyMap<string, string> {
   return styles
 }
 
+/** A style rule from an SVG's own `<style>` block, with the simple selectors it matches. */
+export interface SVGStyleRule {
+  selectors: readonly string[]
+  declarations: ReadonlyMap<string, string>
+}
+
+function parseDeclarations(source: string): Map<string, string> {
+  const declarations = new Map<string, string>()
+  for (const declaration of source.split(';')) {
+    const separator = declaration.indexOf(':')
+    if (separator <= 0) continue
+    const name = declaration.slice(0, separator).trim()
+    const value = declaration
+      .slice(separator + 1)
+      .replace(/!important/i, '')
+      .trim()
+    if (name && value) declarations.set(name, value)
+  }
+  return declarations
+}
+
+function classNames(element: Element): string[] {
+  return (element.getAttribute('class') ?? '').split(/\s+/).filter(Boolean)
+}
+
+function matchesSelector(element: Element, selector: string): boolean {
+  if (selector === '*') return true
+  if (selector.startsWith('.')) return classNames(element).includes(selector.slice(1))
+  if (selector.startsWith('#')) return element.getAttribute('id') === selector.slice(1)
+  return (element.localName || element.tagName).toLowerCase() === selector.toLowerCase()
+}
+
+function isSimpleSelector(selector: string): boolean {
+  return /^(\*|[a-zA-Z][\w:-]*|\.[\w-]+|#[\w-]+)$/.test(selector)
+}
+
+/**
+ * The class rules an SVG declares in its `<style>` blocks. Illustrator and Figma exports keep
+ * colours there instead of presentation attributes, so a reader that only looks at attributes
+ * draws every path black.
+ */
+export function styleRulesFrom(root: Element): SVGStyleRule[] {
+  const rules: SVGStyleRule[] = []
+  for (const style of Array.from(root.getElementsByTagName('style'))) {
+    const css = (style.textContent ?? '').replaceAll(/\/\*[\s\S]*?\*\//g, '')
+    for (const match of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const declarations = parseDeclarations(match[2] ?? '')
+      if (declarations.size === 0) continue
+      const selectors = (match[1] ?? '')
+        .split(',')
+        .map((selector) => selector.trim())
+        .filter(isSimpleSelector)
+      if (selectors.length > 0) rules.push({ selectors, declarations })
+    }
+  }
+  return rules
+}
+
+/** An element's class rules and inline style, in cascade order; inline style wins. */
+export function elementStyles(
+  element: Element,
+  rules: readonly SVGStyleRule[] = []
+): ReadonlyMap<string, string> {
+  const styles = new Map<string, string>()
+  for (const rule of rules) {
+    if (!rule.selectors.some((selector) => matchesSelector(element, selector))) continue
+    for (const [name, value] of rule.declarations) styles.set(name, value)
+  }
+  for (const [name, value] of inlineStyles(element)) styles.set(name, value)
+  return styles
+}
+
 function inheritedAttribute(
   element: Element,
   styles: ReadonlyMap<string, string>,
@@ -71,9 +143,10 @@ function inheritedAttribute(
 
 export function presentationFor(
   element: Element,
-  inherited: PresentationAttributes
+  inherited: PresentationAttributes,
+  rules: readonly SVGStyleRule[] = []
 ): PresentationAttributes {
-  const styles = inlineStyles(element)
+  const styles = elementStyles(element, rules)
   const attribute = (name: string, value: string) =>
     inheritedAttribute(element, styles, name, value)
   return {

@@ -3,15 +3,18 @@ import type { Element } from '@xmldom/xmldom'
 import type { SVGClipPathRegion, SVGElementLayer, SVGTextInfo } from '#core/icons/types'
 
 import {
-  inlineStyles,
+  elementStyles,
   opacityValue,
   presentationVisible,
-  type PresentationAttributes
+  type PresentationAttributes,
+  type SVGStyleRule
 } from './presentation'
 
 export interface Traversal {
   root: Element
   elementsById: ReadonlyMap<string, Element>
+  /** Colour rules from the SVG's own `<style>` blocks. */
+  styleRules: readonly SVGStyleRule[]
   nextKey: number
   /** `<text>` elements in drawing order; each records how many paths precede it. */
   texts: SVGTextInfo[]
@@ -26,6 +29,7 @@ export interface Scope {
   useStack: ReadonlySet<Element>
   /** Drawn through `<use>` or inside a `<clipPath>`, so ids name the source, not this copy. */
   referenced: boolean
+  styleRules: readonly SVGStyleRule[]
 }
 
 export function elementLayer(
@@ -39,7 +43,9 @@ export function elementLayer(
     key: traversal.nextKey++,
     kind,
     name: scope.referenced ? null : element.getAttribute('id') || null,
-    opacity: opacityValue(inlineStyles(element).get('opacity') ?? element.getAttribute('opacity')),
+    opacity: opacityValue(
+      elementStyles(element, traversal.styleRules).get('opacity') ?? element.getAttribute('opacity')
+    ),
     visible: presentationVisible(scope.presentation),
     clip
   }
