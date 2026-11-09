@@ -130,8 +130,7 @@ export async function importWebPage(
   url: string,
   options: WebImportOptions = {}
 ): Promise<EditorStore> {
-  const { html, document: capturedDocument, pageBackground, reference, svgs } =
-    await capturePage(url, options)
+  const { html, document: capturedDocument, reference, svgs } = await capturePage(url, options)
   options.signal?.throwIfAborted()
   const host = new URL(url).hostname.replace(/^www\./i, '') || 'web-page'
   const name = options.name ?? `${host}.html`
@@ -144,8 +143,6 @@ export async function importWebPage(
           readDOMGraphFromDocument(capturedDocument, html, { documentName, signal })
       : undefined
   )
-  const pageColor = applyCapturedPageBackground(store.graph, pageBackground)
-  if (pageColor) store.setPageColor(pageColor)
   if (svgs && svgs.length > 0) {
     replaceCapturedSVGImages(store.graph, svgs)
     store.requestRender()
@@ -240,10 +237,9 @@ export async function importWebPages(
   store.state.showUI = true
   let y = 0
   let widest = 0
-  for (const [index, { path, page, graph }] of captured.entries()) {
+  for (const { path, page, graph } of captured) {
     const { pageBackground, reference, svgs } = page
     const pageColor = applyCapturedPageBackground(graph, pageBackground)
-    if (index === 0 && pageColor) store.setPageColor(pageColor)
     if (svgs && svgs.length > 0) replaceCapturedSVGImages(graph, svgs)
     const frame = copyPageIntoFrame(store, graph, `Page — ${path}`, y, pageColor)
     if (reference) {

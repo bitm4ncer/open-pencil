@@ -228,6 +228,40 @@ async function scrollThrough(page: Page) {
 }
 
 /**
+ * Waits for the DOM to stop changing after custom elements hydrate. Lit components render their
+ * shadow content on intersection, so a fast scroll can reach the clone before prices or section
+ * backgrounds exist. Resolves after `quietMs` without a mutation, capped at `capMs`.
+ */
+async function settleDom(page: Page, quietMs = 300, capMs = 1_200) {
+  await page.evaluate(
+    ({ quiet, cap }) =>
+      new Promise<void>((resolve) => {
+        let quietTimer: ReturnType<typeof setTimeout>
+        let capTimer: ReturnType<typeof setTimeout>
+        const finish = () => {
+          observer.disconnect()
+          clearTimeout(quietTimer)
+          clearTimeout(capTimer)
+          resolve()
+        }
+        const observer = new MutationObserver(() => {
+          clearTimeout(quietTimer)
+          quietTimer = setTimeout(finish, quiet)
+        })
+        observer.observe(document.body, {
+          subtree: true,
+          childList: true,
+          attributes: true,
+          characterData: true
+        })
+        quietTimer = setTimeout(finish, quiet)
+        capTimer = setTimeout(finish, cap)
+      }),
+    { quiet: quietMs, cap: capMs }
+  )
+}
+
+/**
  * Remembers where fixed elements sat in the first stable state. Scrolling can collapse a
  * hide-on-scroll navigation, and the capture should keep the state the page opened in.
  */
@@ -907,12 +941,14 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
     report('dismissing overlays')
     await dismissConsent(page)
     await dismissOverlays(page)
+    await settleDom(page)
     report('recording fixed elements')
     await recordFixedBoxes(page)
     if (args.scroll) {
       report('scrolling')
       await scrollThrough(page)
       await settle(page, Math.min(args.waitMs, 250))
+      await settleDom(page)
       lap('scroll')
     }
     await revealAnimatedContent(page)
@@ -977,6 +1013,12 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
       async ({ selector, svgAttribute, properties, viewportWidth }) => {
         const root = selector ? document.querySelector(selector) : document.body
         if (!root) throw new Error(`Selector "${selector}" did not match anything.`)
+        // Page boxes are document coordinates. A body that still sits below an overlay would
+        // otherwise shift every layer, and a fixed nav above it would land off the page.
+        const measurementOrigin = selector
+          ? root.getBoundingClientRect()
+          : new DOMRect(0, 0, window.innerWidth, window.innerHeight)
+        const layoutByTarget = new Map<Element, DesignLayout>()
 
         /** Nodes a browser renders: slot content, an open shadow root's, or the light DOM's. */
         function renderedChildNodes(element: Element): Node[] {
@@ -1329,6 +1371,26 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
           if (!(target instanceof SVGElement)) target.removeAttribute('id')
         }
 
+        // A section background is paint, not an <img>; leaving its URL remote drops the fill.
+        for (let index = 0; index < sourceElements.length; index++) {
+          const target = targetElements[index] as HTMLElement
+          const record = styleRecords.get(target)
+          if (!record) continue
+          for (const property of [
+            'background-image',
+            'mask-image',
+            'border-image-source'
+          ] as const) {
+            const value = record[property]
+            if (!value || !value.includes('url(')) continue
+            const inlined = await inlineURLs(value)
+            if (inlined !== value) {
+              record[property] = inlined
+              target.style.setProperty(property, inlined)
+            }
+          }
+        }
+
         const noPseudoChildren = new Set(['IMG', 'INPUT', 'TEXTAREA', 'SELECT', 'VIDEO', 'CANVAS'])
         const seenOverlays = new Set<string>()
         for (let index = 0; index < sourceElements.length; index++) {
@@ -1440,6 +1502,19 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
             ].join(';')
             if (text) overlay.textContent = text
             styleRecords.set(overlay, styleRecord(overlay.style))
+            // Measure the pseudo in the live page, where it has a layout box; the detached clone
+            // would otherwise leave it unplaced and decorative arrows or bars land at 0,0.
+            const liveOverlay = document.createElement(overlay.tagName)
+            liveOverlay.style.cssText = overlay.style.cssText
+            liveOverlay.style.visibility = 'hidden'
+            if (text) liveOverlay.textContent = text
+            if (pseudo === '::before') source.prepend(liveOverlay)
+            else source.append(liveOverlay)
+            layoutByTarget.set(
+              overlay,
+              measureElement(liveOverlay, measurementOrigin, fixedOffsetFor(source))
+            )
+            liveOverlay.remove()
             if (pseudo === '::before') target.prepend(overlay)
             else target.append(overlay)
           }
@@ -1627,7 +1702,6 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
           )
           .join('\n')
 
-        const layoutByTarget = new Map<Element, DesignLayout>()
         const untransformed = document.createElement('style')
         untransformed.textContent =
           '*,*::before,*::after{transform:none!important;translate:none!important;' +
@@ -1635,11 +1709,7 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
           'animation:none!important}'
         document.head.append(untransformed)
         try {
-          // Page boxes are document coordinates. A body that still sits below an overlay would
-          // otherwise shift every layer, and a fixed nav above it would land off the page.
-          const origin = selector
-            ? root.getBoundingClientRect()
-            : new DOMRect(0, 0, window.innerWidth, window.innerHeight)
+          const origin = measurementOrigin
           for (let index = 0; index < sourceElements.length; index++) {
             const source = sourceElements[index]
             layoutByTarget.set(

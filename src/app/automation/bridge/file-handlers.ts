@@ -3,7 +3,6 @@ import { mkdir } from '@tauri-apps/plugin-fs'
 import * as v from 'valibot'
 
 import { DOCUMENT_EXTENSIONS } from '@open-pencil/core/io'
-import { applyCapturedPageBackground } from '@open-pencil/core/io/formats/html/layers'
 import { replaceCapturedSVGImages } from '@open-pencil/core/io/formats/svg'
 import { parseToolArgs } from '@open-pencil/core/tools'
 import type { DocumentKind } from '@open-pencil/scene-graph'
@@ -241,8 +240,6 @@ export function createFileHandlers(files?: AutomationFiles) {
             })
         : undefined
     )
-    const pageColor = applyCapturedPageBackground(store.graph, captured.pageBackground)
-    if (pageColor) store.setPageColor(pageColor)
     if (captured.svgs && captured.svgs.length > 0) {
       replaceCapturedSVGImages(store.graph, captured.svgs)
       store.requestRender()

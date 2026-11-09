@@ -1,5 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 
+import { CANVAS_BG_COLOR } from '@open-pencil/core/constants'
+
 import { CanvasHelper } from '#tests/helpers/canvas'
 
 const PAGE_URL = 'https://example.com/'
@@ -90,7 +92,7 @@ test('imports a page with its reference image from the File menu', async ({ page
   expect(imported.documentName).toContain('example.com')
   expect(imported.texts).toContain('Imported heading')
   expect(imported.imageLayers).toBe(1)
-  expect(imported.pageBackground).toMatchObject({ r: 1, g: 1, b: 1, a: 1 })
+  expect(imported.pageBackground).toMatchObject(CANVAS_BG_COLOR)
   canvas.assertNoErrors()
 })
 
