@@ -30,6 +30,7 @@ import {
 } from './box'
 import { hasBoxStyle } from './boxes'
 import { colorToStrokeFromCSS, mergedStyle, pickStyle } from './css-values'
+import { gradientFillFromCSS } from './gradient'
 import {
   applyContainerLayout,
   applyFlowSizing,
@@ -221,6 +222,8 @@ function applyElementStyle(
   const fills = fillsFromStyle(style, 'background-color')
   if (fills.length > 0) node.fills = fills
   applyBackgroundImage(graph, node, style)
+  const gradient = gradientFillFromCSS(pickStyle(style, 'background-image'), node.width, node.height)
+  if (gradient) node.fills = [...node.fills, gradient]
   applyImageFill(graph, node, element, style)
 
   // A border without a style is not drawn and takes no room.

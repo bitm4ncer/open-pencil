@@ -402,6 +402,32 @@ describe('@open-pencil/dom-css conversion', () => {
     expect(fill?.imageHash ? graph.images.has(fill.imageHash) : false).toBe(true)
   })
 
+  it('maps a CSS gradient background onto the box', () => {
+    const graph = designDocumentToSceneGraph({
+      type: 'document',
+      children: [
+        {
+          type: 'element',
+          tagName: 'section',
+          attrs: {},
+          computedStyle: {
+            width: '1440px',
+            height: '640px',
+            'background-image': 'linear-gradient(90deg, rgb(92, 80, 217), rgb(213, 12, 45))'
+          },
+          children: []
+        }
+      ]
+    })
+    const page = graph.getPages()[0]
+    const box = expectFrame(page ? graph.getChildren(page.id)[0] : undefined)
+    const fill = box.fills[0]
+
+    expect(fill?.type).toBe('GRADIENT_LINEAR')
+    expect(fill?.gradientStops).toHaveLength(2)
+    expect(fill?.gradientTransform).toBeDefined()
+  })
+
   it('round-trips logical padding, side borders, opacity, and text style fields', () => {
     const graph = createStyleRoundTripGraph()
     const panel = expectStyleRoundTripPanel(graph)
