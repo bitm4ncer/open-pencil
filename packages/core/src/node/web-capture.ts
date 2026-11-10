@@ -189,24 +189,25 @@ async function dismissConsent(page: Page) {
         style.display !== 'none' && style.visibility !== 'hidden' && box.width > 0 && box.height > 0
       )
     }
-    const scopes = [
-      document.querySelector('#CybotCookiebotDialog'),
-      ...document.querySelectorAll(
-        '[id*="cookiebot"], [class*="cookiebot"], [class*="consent"], [role="dialog"]'
-      )
-    ].filter((scope): scope is Element => scope !== null)
-    const roots = scopes.length > 0 ? scopes : [document.body]
-    for (const root of roots) {
-      const buttons = root.querySelectorAll<HTMLElement>(
-        'button, [role="button"], a, input[type="button"], input[type="submit"]'
-      )
-      for (const button of buttons) {
-        if (!visible(button)) continue
-        const text = button.textContent.trim().toLowerCase()
-        if (!words.some((word) => text === word || text.startsWith(`${word} `))) continue
-        button.click()
-        return true
+    const composed = (root: ParentNode): Element[] => {
+      const elements: Element[] = []
+      for (const element of root.querySelectorAll('*')) {
+        elements.push(element)
+        if (element.shadowRoot) elements.push(...composed(element.shadowRoot))
       }
+      return elements
+    }
+    const buttons = composed(document).filter(
+      (element): element is HTMLElement =>
+        element instanceof HTMLElement &&
+        element.matches('button, [role="button"], a, input[type="button"], input[type="submit"]')
+    )
+    for (const button of buttons) {
+      if (!visible(button)) continue
+      const text = button.textContent.trim().toLowerCase()
+      if (!words.some((word) => text === word || text.startsWith(`${word} `))) continue
+      button.click()
+      return true
     }
     return false
   })
@@ -237,19 +238,28 @@ async function dismissOverlays(page: Page) {
   const dismiss = () =>
     page.evaluate((words) => {
       const viewport = window.innerWidth * window.innerHeight
-      const layers = [...document.querySelectorAll('body *')].filter((element) => {
+      const composed = (root: ParentNode): Element[] => {
+        const elements: Element[] = []
+        for (const element of root.querySelectorAll('*')) {
+          elements.push(element)
+          if (element.shadowRoot) elements.push(...composed(element.shadowRoot))
+        }
+        return elements
+      }
+      const layers = composed(document.body).filter((element) => {
         if (!(element instanceof HTMLElement)) return false
         const style = getComputedStyle(element)
         if (style.position !== 'fixed' && style.position !== 'sticky') return false
         const box = element.getBoundingClientRect()
         return box.width * box.height > viewport * 0.15
       })
+      let changed = false
       for (const layer of layers) {
-        const candidates = [
-          ...layer.querySelectorAll<HTMLElement>(
-            'button, [role="button"], a, [class*="close"], [class*="dismiss"]'
-          )
-        ]
+        const candidates = composed(layer).filter(
+          (element): element is HTMLElement =>
+            element instanceof HTMLElement &&
+            element.matches('button, [role="button"], a, [class*="close"], [class*="dismiss"]')
+        )
         const close = candidates.find((candidate) => {
           const text = candidate.textContent.trim().toLowerCase()
           const label = (candidate.getAttribute('aria-label') ?? '').toLowerCase()
@@ -257,9 +267,10 @@ async function dismissOverlays(page: Page) {
         })
         if (!close) continue
         close.click()
-        return true
+        changed = true
+        break
       }
-      return false
+      return changed
     }, OVERLAY_DISMISS_LABELS)
   try {
     if (await dismiss()) await page.waitForTimeout(250)
@@ -836,6 +847,7 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
         }
 
         const capturedSVGs: CaptureSVGCandidate[] = []
+        const fixedHeaders: HTMLElement[] = []
 
         /** Bounds in page pixels, which the imported document uses as its own coordinates. */
         function svgPageRect(element: Element): Rect {
@@ -972,9 +984,34 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
           })()
         }
 
+        /**
+         * Background SVGs are rasterized before they become a paint: the scene graph draws raster
+         * images, and a raw SVG data URL would leave the box empty or black.
+         */
+        async function inlineImageURLs(
+          value: string,
+          width: number,
+          height: number
+        ): Promise<string> {
+          const urls = [...value.matchAll(/url\((['"]?)(.*?)\1\)/g)].map((match) => match[2])
+          let next = value
+          for (const url of urls) {
+            if (!url || url.startsWith('data:image/png') || url.startsWith('data:image/jpeg')) {
+              continue
+            }
+            const data = await toDataURL(url)
+            const svg =
+              url.split('?')[0]?.toLowerCase().endsWith('.svg') || data.startsWith('data:image/svg')
+            const raster = svg ? await rasterizeSVGData(data, width, height) : null
+            next = next.split(url).join(raster ?? data)
+          }
+          return next
+        }
+
         for (let index = 0; index < sourceElements.length; index++) {
           const source = sourceElements[index]
           const target = targetElements[index] as HTMLElement
+          if (!source || !target) continue
           const computed = getComputedStyle(source)
           let css = ''
           for (const property of computed) {
@@ -982,6 +1019,71 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
             if (value) css += `${property}:${value};`
           }
           target.style.cssText = css
+          const rect = source.getBoundingClientRect()
+          if (
+            source instanceof HTMLAnchorElement &&
+            /^skip\b/i.test(source.textContent?.trim() ?? '') &&
+            rect.bottom <= 1
+          ) {
+            target.setAttribute('data-openpencil-skip', '')
+          }
+          if (
+            computed.position === 'fixed' &&
+            rect.width > window.innerWidth * 0.5 &&
+            rect.height > 0 &&
+            rect.height < 400 &&
+            (rect.top <= 1 || rect.bottom <= 1)
+          ) {
+            // A sticky navigation that left the viewport comes back, and the clone keeps it
+            // where the page showed it instead of letting it take space in the flow.
+            target.style.position = 'absolute'
+            target.style.top = `${Math.max(0, rect.top)}px`
+            target.style.left = `${Math.max(0, rect.left)}px`
+            target.style.width = `${rect.width}px`
+            target.style.height = `${rect.height}px`
+            target.style.margin = '0'
+            target.style.zIndex = '9999'
+            if (rect.bottom <= 0) target.style.transform = 'none'
+            fixedHeaders.push(target)
+          }
+          const scrollHeight = source.scrollHeight
+          const clientHeight = source.clientHeight
+          if (scrollHeight > clientHeight + 1) {
+            // An app shell scrolls inside a fixed-height box; the clone lets that content
+            // expand, so the import holds the whole page rather than its first viewport.
+            if (computed.overflowY === 'auto' || computed.overflowY === 'scroll') {
+              target.style.height = `${scrollHeight}px`
+              target.style.maxHeight = 'none'
+              target.style.overflowY = 'visible'
+            } else if (Math.abs(clientHeight - window.innerHeight) <= 2) {
+              // A viewport-sized wrapper with visible overflow still clips the imported page at
+              // the first screen once its height is a fixed number.
+              target.style.height = `${scrollHeight}px`
+              target.style.maxHeight = 'none'
+            }
+            if (
+              (source === document.body || source === document.documentElement) &&
+              scrollHeight > clientHeight + 1
+            ) {
+              // The page container's computed height is the viewport. The import holds the whole
+              // page, so it grows to the content instead of clipping at the first screen.
+              target.style.height = `${Math.max(scrollHeight, clientHeight)}px`
+              target.style.maxHeight = 'none'
+              target.style.overflow = 'visible'
+            }
+          }
+          const background = computed.getPropertyValue('background-image')
+          if (background.includes('url(')) {
+            const inlined = await inlineImageURLs(background, rect.width, rect.height)
+            if (inlined !== background) target.style.setProperty('background-image', inlined)
+          }
+          for (const property of ['mask-image', 'border-image-source'] as const) {
+            const value = computed.getPropertyValue(property)
+            if (value.includes('url(')) {
+              const inlined = await inlineURLs(value)
+              if (inlined !== value) target.style.setProperty(property, inlined)
+            }
+          }
           target.removeAttribute('class')
           // SVG defs, gradients, and clips are referenced by id, so an inline SVG keeps its ids.
           if (!(target instanceof SVGElement)) target.removeAttribute('id')
@@ -993,6 +1095,7 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
           if (seenOverlays.size >= 300) break
           const source = sourceElements[index]
           const target = targetElements[index] as HTMLElement
+          if (!source || !target) continue
           if (noPseudoChildren.has(source.tagName) || getComputedStyle(source).display === 'none') {
             continue
           }
@@ -1015,7 +1118,7 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
               // Small pseudo backgrounds are usually icons; larger ones are repeated
               // third-party artwork already carried by the element itself.
               if (pseudoelementWidth > 256 || pseudoelementHeight > 256) continue
-              image = await inlineURLs(image)
+              image = await inlineImageURLs(image, pseudoelementWidth, pseudoelementHeight)
             }
             const color = style.backgroundColor
             const noImage = !image || image === 'none'
@@ -1105,8 +1208,9 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
         for (let index = 0; index < sourceElements.length; index++) {
           const source = sourceElements[index]
           const target = targetElements[index] as HTMLElement
+          if (!source || !target) continue
+          const rect = source.getBoundingClientRect()
           if (source instanceof HTMLImageElement && target instanceof HTMLImageElement) {
-            const rect = source.getBoundingClientRect()
             // Tracking pixels and display-none images carry no design content.
             if (rect.width < 2 || rect.height < 2) continue
             stats.images++
@@ -1152,7 +1256,11 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
           const background =
             source instanceof HTMLElement ? getComputedStyle(source).backgroundImage : ''
           if (background && background !== 'none' && background.includes('url(')) {
-            target.style.backgroundImage = await inlineURLs(background)
+            target.style.backgroundImage = await inlineImageURLs(
+              background,
+              rect.width,
+              rect.height
+            )
           }
           if (source instanceof HTMLInputElement && target instanceof HTMLInputElement) {
             if (source.type === 'checkbox' || source.type === 'radio') {
@@ -1169,6 +1277,19 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
             for (let option = 0; option < count; option++) {
               target.options[option].selected = source.options[option].selected
             }
+          }
+        }
+
+        // A fixed header is positioned against the viewport, but in the clone its nearest
+        // positioned ancestor moved it into the page. Put it back at the page's top level.
+        for (const header of fixedHeaders) clone.append(header)
+
+        if (root === document.body && clone instanceof HTMLElement) {
+          const bodyHeight = document.body.scrollHeight
+          if (bodyHeight > document.body.clientHeight + 1) {
+            clone.style.height = `${bodyHeight}px`
+            clone.style.maxHeight = 'none'
+            clone.style.overflow = 'visible'
           }
         }
 
@@ -1288,17 +1409,26 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
           .querySelectorAll('script,link,style,noscript,template,meta,base')
           .forEach((element) => element.remove())
 
+        const asStyleElement = (css: string) =>
+          `<style>${css.replace(/<\/style/gi, '<\\/style')}</style>`
+        const escapeAttribute = (value: string) =>
+          value.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;')
         const head = [
           '<meta charset="utf-8">',
-          `<base href="${document.baseURI}">`,
+          `<base href="${escapeAttribute(document.baseURI)}">`,
           '<style>html,body{margin:0;padding:0}*{animation:none!important;transition:none!important}</style>',
-          ...stylesheets.map((css) => `<style>${css}</style>`),
-          fontFaces.length > 0 ? `<style>${fontFaces.join('\n')}</style>` : '',
+          ...stylesheets.map(asStyleElement),
+          fontFaces.length > 0 ? asStyleElement(fontFaces.join('\n')) : '',
           links
         ].join('\n')
         // A body clone is already the body: emitting it inside another body nests one document
         // inside another and the importer sees no page children.
-        const bodyStyle = root === document.body ? (clone.getAttribute('style') ?? '') : ''
+        // A skip link sits outside the viewport until it is focused; it is navigation chrome,
+        // not page content.
+        for (const skip of clone.querySelectorAll('[data-openpencil-skip]')) skip.remove()
+        const bodyStyle = escapeAttribute(
+          root === document.body ? (clone.getAttribute('style') ?? '') : ''
+        )
         const content = root === document.body ? clone.innerHTML : clone.outerHTML
         const pageBackground = [
           getComputedStyle(document.body).backgroundColor,
