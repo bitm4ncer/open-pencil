@@ -31,7 +31,7 @@ function angleInDegrees(value: string): number | null {
   if (!match) return null
   const amount = Number(match[1])
   if (!Number.isFinite(amount)) return null
-  switch ((match[2] ?? 'deg').toLowerCase()) {
+  switch ((match.at(2) ?? 'deg').toLowerCase()) {
     case 'deg':
       return amount
     case 'grad':
@@ -66,8 +66,8 @@ function linearDirection(value: string): number | null {
   if (text.startsWith('to ')) {
     const sides = text.slice(3).split(/\s+/)
     if (sides.length === 2) {
-      const vertical = sides.includes('top') ? 'top' : sides.includes('bottom') ? 'bottom' : null
-      const horizontal = sides.includes('left') ? 'left' : sides.includes('right') ? 'right' : null
+      const vertical = ['top', 'bottom'].find((side) => sides.includes(side)) ?? null
+      const horizontal = ['left', 'right'].find((side) => sides.includes(side)) ?? null
       if (vertical && horizontal) return named[`to ${vertical} ${horizontal}`] ?? null
     }
   }
@@ -89,7 +89,7 @@ function colorAtStart(value: string): { color: NonNullable<ReturnType<typeof try
   if (!match) return null
   const color = tryParseColor(match[1])
   if (!color) return null
-  return { color, rest: match[2]?.trim() ?? '' }
+  return { color, rest: match.at(2)?.trim() ?? '' }
 }
 
 function parseStops(values: string[], lineLength: number): GradientStop[] {
@@ -146,7 +146,7 @@ export function gradientFillFromCSS(
       (node.value.toLowerCase() === 'linear-gradient' ||
         node.value.toLowerCase() === 'radial-gradient')
   )
-  if (!fn || fn.type !== 'function') return null
+  if (fn?.type !== 'function') return null
 
   const args = groups(fn.nodes)
   if (args.length < 2) return null

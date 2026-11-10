@@ -220,7 +220,7 @@ async function markConsentLayers(page: Page): Promise<number> {
             element.matches('button, [role="button"], a, input[type="button"], input[type="submit"]') &&
             visible(element) &&
             choices.some((choice) =>
-              choice.test((element.textContent ?? '').replace(/\s+/g, ' ').trim())
+              choice.test(element.textContent.replace(/\s+/g, ' ').trim())
             )
         )
       for (const marked of composed(document.body)) {
@@ -245,7 +245,7 @@ async function markConsentLayers(page: Page): Promise<number> {
         const vendorFrame = [...element.querySelectorAll('iframe')].some((frame) =>
           pattern.test(`${frame.src} ${frame.id} ${frame.className}`)
         )
-        return dialog || pattern.test(name) || pattern.test(element.textContent ?? '') || vendorFrame
+        return dialog || pattern.test(name) || pattern.test(element.textContent) || vendorFrame
       })
       const tops = candidates.filter(
         (layer) => !candidates.some((other) => other !== layer && other.contains(layer))
@@ -309,7 +309,7 @@ async function hideMarkedConsentLayers(page: Page) {
       if (!(element instanceof HTMLElement) || element.hasAttribute('data-openpencil-consent')) {
         continue
       }
-      if ((element.textContent ?? '').trim().length > 2) continue
+      if (element.textContent.trim().length > 2) continue
       const style = getComputedStyle(element)
       if (style.position !== 'fixed' && style.position !== 'absolute') continue
       const box = element.getBoundingClientRect()
@@ -996,7 +996,7 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
         }
 
         const capturedSVGs: CaptureSVGCandidate[] = []
-        const fixedHeaders: HTMLElement[] = []
+        const fixedHeaders: Element[] = []
 
         /** Bounds in page pixels, which the imported document uses as its own coordinates. */
         function svgPageRect(element: Element): Rect {
@@ -1158,9 +1158,9 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
         }
 
         for (let index = 0; index < sourceElements.length; index++) {
-          const source = sourceElements[index]
-          const target = targetElements[index] as HTMLElement
-          if (!source || !target) continue
+          const source = sourceElements.at(index)
+          const target = targetElements.at(index)
+          if (!source || !(target instanceof HTMLElement || target instanceof SVGElement)) continue
           const computed = getComputedStyle(source)
           let css = ''
           for (const property of computed) {
@@ -1171,7 +1171,7 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
           const rect = source.getBoundingClientRect()
           if (
             source instanceof HTMLAnchorElement &&
-            /^skip\b/i.test(source.textContent?.trim() ?? '') &&
+            /^skip\b/i.test(source.textContent.trim()) &&
             rect.bottom <= 1
           ) {
             target.setAttribute('data-openpencil-skip', '')
@@ -1242,9 +1242,9 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
         const seenOverlays = new Set<string>()
         for (let index = 0; index < sourceElements.length; index++) {
           if (seenOverlays.size >= 300) break
-          const source = sourceElements[index]
-          const target = targetElements[index] as HTMLElement
-          if (!source || !target) continue
+          const source = sourceElements.at(index)
+          const target = targetElements.at(index)
+          if (!source || !(target instanceof HTMLElement || target instanceof SVGElement)) continue
           if (noPseudoChildren.has(source.tagName) || getComputedStyle(source).display === 'none') {
             continue
           }
@@ -1355,8 +1355,8 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
         }
 
         for (let index = 0; index < sourceElements.length; index++) {
-          const source = sourceElements[index]
-          const target = targetElements[index] as HTMLElement
+          const source = sourceElements.at(index)
+          const target = targetElements.at(index)
           if (!source || !target) continue
           const rect = source.getBoundingClientRect()
           if (source instanceof HTMLImageElement && target instanceof HTMLImageElement) {
@@ -1405,11 +1405,13 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
           const background =
             source instanceof HTMLElement ? getComputedStyle(source).backgroundImage : ''
           if (background && background !== 'none' && background.includes('url(')) {
-            target.style.backgroundImage = await inlineImageURLs(
-              background,
-              rect.width,
-              rect.height
-            )
+            if (target instanceof HTMLElement || target instanceof SVGElement) {
+              target.style.backgroundImage = await inlineImageURLs(
+                background,
+                rect.width,
+                rect.height
+              )
+            }
           }
           if (source instanceof HTMLInputElement && target instanceof HTMLInputElement) {
             if (source.type === 'checkbox' || source.type === 'radio') {

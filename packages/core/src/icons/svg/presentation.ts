@@ -1,4 +1,5 @@
 import type { Element, Node } from '@xmldom/xmldom'
+import { compact } from 'es-toolkit'
 
 /** SVG presentation attributes as an element inherits them, still as source strings. */
 export interface PresentationAttributes {
@@ -79,7 +80,7 @@ function parseDeclarations(source: string): Map<string, string> {
 }
 
 function classNames(element: Element): string[] {
-  return (element.getAttribute('class') ?? '').split(/\s+/).filter(Boolean)
+  return compact((element.getAttribute('class') ?? '').split(/\s+/))
 }
 
 function matchesSelector(element: Element, selector: string): boolean {
@@ -103,9 +104,9 @@ export function styleRulesFrom(root: Element): SVGStyleRule[] {
   for (const style of Array.from(root.getElementsByTagName('style'))) {
     const css = (style.textContent ?? '').replaceAll(/\/\*[\s\S]*?\*\//g, '')
     for (const match of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-      const declarations = parseDeclarations(match[2] ?? '')
+      const declarations = parseDeclarations(match[2])
       if (declarations.size === 0) continue
-      const selectors = (match[1] ?? '')
+      const selectors = match[1]
         .split(',')
         .map((selector) => selector.trim())
         .filter(isSimpleSelector)

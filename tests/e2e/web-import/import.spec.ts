@@ -126,7 +126,9 @@ test('cancelling a capture leaves the open document untouched', async ({ page })
   await canvas.waitForInit()
 
   await page.route('**/capture', async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 2_000))
+    await new Promise((resolve) => {
+      setTimeout(resolve, 2_000)
+    })
     await route
       .fulfill({
         json: {
