@@ -450,12 +450,22 @@ async function pruneHidden(page: Page, selector?: string): Promise<number> {
   return page.evaluate((target) => {
     const root = target ? document.querySelector(target) : document.body
     if (!root) return 0
-    const elements = [...root.querySelectorAll('*')].reverse()
+    const composed = (scope: ParentNode): Element[] => {
+      const elements: Element[] = []
+      for (const element of scope.querySelectorAll('*')) {
+        elements.push(element)
+        if (element.shadowRoot) elements.push(...composed(element.shadowRoot))
+      }
+      return elements
+    }
+    const elements = composed(root).reverse()
     const nonRendered = new Set(['STYLE', 'LINK', 'SCRIPT', 'META', 'TITLE', 'TEMPLATE', 'BASE'])
     for (const element of elements) {
       // A stylesheet or script in the body has no box, but removing it would restyle the page
       // before its computed styles are copied.
       if (nonRendered.has(element.tagName)) continue
+      // A slot has no box of its own; removing it would drop the content composed into it.
+      if (element.tagName === 'SLOT') continue
       if (!(element instanceof HTMLElement)) continue
       const style = getComputedStyle(element)
       if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
