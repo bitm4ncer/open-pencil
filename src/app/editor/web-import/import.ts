@@ -1,6 +1,6 @@
 import * as v from 'valibot'
 
-import { applyCapturedPageBackground } from '@open-pencil/core/io/formats/html/layers'
+import { applyCapturedPageBackground, capturedPageColor } from '@open-pencil/core/io/formats/html/layers'
 import { replaceCapturedSVGImages } from '@open-pencil/core/io/formats/svg'
 import { cloneNodeProps } from '@open-pencil/scene-graph/copy'
 import type { Color } from '@open-pencil/scene-graph/primitives'
@@ -134,14 +134,20 @@ export async function importWebPage(
   const host = new URL(url).hostname.replace(/^www\./i, '') || 'web-page'
   const name = options.name ?? `${host}.html`
   const store = await openFileInNewTab(new File([html], name, { type: 'text/html' }))
-  const pageColor = applyCapturedPageBackground(store.graph, pageBackground)
-  if (pageColor) store.setPageColor(pageColor)
+  const pageColor = capturedPageColor(pageBackground)
+  if (pageColor && (pageColor.r < 0.94 || pageColor.g < 0.94 || pageColor.b < 0.94)) {
+    applyCapturedPageBackground(store.graph, pageBackground)
+  }
   if (svgs && svgs.length > 0) {
     replaceCapturedSVGImages(store.graph, svgs)
     store.requestRender()
   }
-  if (reference) await placeWebImportReference(store, host, reference)
-  fitWidth(store, (options.viewport?.width ?? 1440) + (reference ? reference.width + 120 : 0))
+  const viewportWidth = options.viewport?.width ?? 1440
+  if (reference) await placeWebImportReference(store, host, reference, { cropWidth: viewportWidth })
+  fitWidth(
+    store,
+    viewportWidth + (reference ? Math.min(reference.width, viewportWidth) + 120 : 0)
+  )
   return store
 }
 
@@ -223,22 +229,26 @@ export async function importWebPages(
   const store = createDocumentTab('design').store
   store.state.documentName = host
   store.state.showUI = true
+  const viewportWidth = options.viewport?.width ?? 1440
   let y = 0
   let widest = 0
-  for (const [index, { path, page, graph }] of captured.entries()) {
+  for (const { path, page, graph } of captured) {
     const { pageBackground, reference, svgs } = page
     const pageColor = applyCapturedPageBackground(graph, pageBackground)
-    if (index === 0 && pageColor) store.setPageColor(pageColor)
     if (svgs && svgs.length > 0) replaceCapturedSVGImages(graph, svgs)
     const frame = copyPageIntoFrame(store, graph, `Page — ${path}`, y, pageColor)
     if (reference) {
       await placeWebImportReference(store, host, reference, {
         x: frame.width + 120,
         y,
-        name: `Original — ${path}`
+        name: `Original — ${path}`,
+        cropWidth: viewportWidth
       })
     }
-    widest = Math.max(widest, frame.width + (reference ? reference.width + 120 : 0))
+    widest = Math.max(
+      widest,
+      frame.width + (reference ? Math.min(reference.width, viewportWidth) + 120 : 0)
+    )
     y += Math.max(frame.height, reference?.height ?? 0) + 240
   }
   fitWidth(store, widest)

@@ -3,7 +3,10 @@ import { mkdir } from '@tauri-apps/plugin-fs'
 import * as v from 'valibot'
 
 import { DOCUMENT_EXTENSIONS } from '@open-pencil/core/io'
-import { applyCapturedPageBackground } from '@open-pencil/core/io/formats/html/layers'
+import {
+  applyCapturedPageBackground,
+  capturedPageColor
+} from '@open-pencil/core/io/formats/html/layers'
 import { replaceCapturedSVGImages } from '@open-pencil/core/io/formats/svg'
 import { parseToolArgs } from '@open-pencil/core/tools'
 import type { DocumentKind } from '@open-pencil/scene-graph'
@@ -227,13 +230,19 @@ export function createFileHandlers(files?: AutomationFiles) {
     const host = new URL(request.url).hostname.replace(/^www\./i, '') || 'web-page'
     const file = new File([captured.html], `${host}.html`, { type: 'text/html' })
     const store = await openFileInNewTab(file)
-    const pageColor = applyCapturedPageBackground(store.graph, captured.pageBackground)
-    if (pageColor) store.state.pageColor = pageColor
+    const pageColor = capturedPageColor(captured.pageBackground)
+    if (pageColor && (pageColor.r < 0.94 || pageColor.g < 0.94 || pageColor.b < 0.94)) {
+      applyCapturedPageBackground(store.graph, captured.pageBackground)
+    }
     if (captured.svgs && captured.svgs.length > 0) {
       replaceCapturedSVGImages(store.graph, captured.svgs)
       store.requestRender()
     }
-    if (captured.reference) await placeWebImportReference(store, host, captured.reference)
+    if (captured.reference) {
+      await placeWebImportReference(store, host, captured.reference, {
+        cropWidth: request.viewport?.width ?? 1440
+      })
+    }
     return { ok: true, result: { opened: true, url: request.url, name: host } }
   }
 

@@ -21,21 +21,32 @@ function imageBytes(src: string): Uint8Array | null {
   return toUint8Array(data)
 }
 
-/** Keeps a full-page reference inside the renderer's texture limit. */
-async function limitReference(bytes: Uint8Array): Promise<Uint8Array> {
+/** Keeps a full-page reference inside the renderer's texture limit, cropped to the viewport. */
+async function limitReference(bytes: Uint8Array, cropWidth?: number): Promise<Uint8Array> {
   const copy = new Uint8Array(bytes.byteLength)
   copy.set(bytes)
   const bitmap = await createImageBitmap(new Blob([copy]))
   try {
-    const scale = Math.min(1, MAX_REFERENCE_EDGE / Math.max(bitmap.width, bitmap.height))
-    if (scale === 1) return bytes
+    const sourceWidth = cropWidth ? Math.min(bitmap.width, cropWidth) : bitmap.width
+    const scale = Math.min(1, MAX_REFERENCE_EDGE / Math.max(sourceWidth, bitmap.height))
+    if (scale === 1 && sourceWidth === bitmap.width) return bytes
     const canvas = new OffscreenCanvas(
-      Math.max(1, Math.round(bitmap.width * scale)),
+      Math.max(1, Math.round(sourceWidth * scale)),
       Math.max(1, Math.round(bitmap.height * scale))
     )
     const context = canvas.getContext('2d')
     if (!context) return bytes
-    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+    context.drawImage(
+      bitmap,
+      0,
+      0,
+      sourceWidth,
+      bitmap.height,
+      0,
+      0,
+      canvas.width,
+      canvas.height
+    )
     const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.86 })
     return new Uint8Array(await blob.arrayBuffer())
   } finally {
@@ -51,12 +62,13 @@ export async function placeWebImportReference(
   store: EditorStore,
   host: string,
   reference: WebImportReference,
-  options: { x?: number; y?: number; name?: string } = {}
+  options: { x?: number; y?: number; name?: string; cropWidth?: number } = {}
 ): Promise<void> {
   const raw = imageBytes(reference.src)
   const page = store.graph.getNode(store.state.currentPageId)
   if (!raw || !page) return
-  const bytes = await limitReference(raw).catch(() => raw)
+  const bytes = await limitReference(raw, options.cropWidth).catch(() => raw)
+  const width = options.cropWidth ? Math.min(reference.width, options.cropWidth) : reference.width
 
   let maxX = 0
   for (const childId of page.childIds) {
@@ -68,9 +80,9 @@ export async function placeWebImportReference(
   store.graph.images.set(hash, bytes)
   store.graph.createNode('RECTANGLE', page.id, {
     name: options.name ?? `Original — ${host}`,
-    x: options.x ?? Math.max(maxX, reference.width) + 120,
+    x: options.x ?? Math.max(maxX, width) + 120,
     y: options.y ?? 0,
-    width: reference.width,
+    width,
     height: reference.height,
     fills: [
       {
