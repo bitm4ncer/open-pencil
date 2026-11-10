@@ -459,4 +459,22 @@ describe('web capture SVGs replace their raster fallback', () => {
     expect(result).toEqual({ replaced: 0, kept: 1 })
     expect(graph.getNode(raster.id)).toBeDefined()
   })
+
+  test('keeps the raster fallback for a large illustration with gradients', () => {
+    const graph = capturedWebPage()
+    const raster = capturedRaster(graph)
+
+    const result = replaceCapturedSVGImages(graph, [
+      {
+        svg: '<svg viewBox="0 0 500 500"><defs><linearGradient id="g"><stop offset="0" stop-color="#f00"/><stop offset="1" stop-color="#00f"/></linearGradient></defs><rect width="500" height="500" fill="url(#g)"/></svg>',
+        x: 40,
+        y: 20,
+        width: 500,
+        height: 500
+      }
+    ])
+
+    expect(result).toEqual({ replaced: 0, kept: 1 })
+    expect(graph.getNode(raster.id)).toBeDefined()
+  })
 })

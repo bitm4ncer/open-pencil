@@ -8,6 +8,21 @@ import { createSVGNodesFromImport, prepareSVGImport } from './import'
 /** `rescaleNodeTree` refuses a smaller scale, so a vector too tiny to scale stays raster. */
 const MIN_VECTOR_SCALE = 0.01
 
+/**
+ * A large illustration built from gradients, patterns, or embedded images loses more than it gains
+ * as vectors: the importer draws unsupported paints in flat black. Its capture already rasterized
+ * it, so that keeps the picture the page showed. Icons and logos stay editable.
+ */
+const MAX_COMPLEX_VECTOR_EDGE = 320
+const COMPLEX_SVG_MARKUP = /<(?:linearGradient|radialGradient|pattern|filter|foreignObject|image)\b/i
+
+function keepsRasterFallback(captured: CapturedSVG): boolean {
+  return (
+    Math.max(captured.width, captured.height) > MAX_COMPLEX_VECTOR_EDGE &&
+    COMPLEX_SVG_MARKUP.test(captured.svg)
+  )
+}
+
 /** What replacing captured SVGs did: vectors built, and rasters left in place. */
 export interface WebSVGReplacement {
   replaced: number
@@ -47,6 +62,7 @@ function placeCapturedVector(
 
 /** Replaces one marked raster layer, or leaves it when its source cannot become vectors. */
 function replaceMarkedLayer(graph: SceneGraph, node: SceneNode, captured: CapturedSVG): boolean {
+  if (keepsRasterFallback(captured)) return false
   const parentId = node.parentId
   const parent = parentId ? graph.getNode(parentId) : undefined
   if (!parentId || !parent) return false
