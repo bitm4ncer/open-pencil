@@ -170,25 +170,127 @@ async function scrollThrough(page: Page) {
   })
 }
 
-/** Accepts a cookie banner before the page is cloned or screenshotted. */
-async function dismissConsent(page: Page) {
-  const clicked = await page.evaluate(() => {
-    const words = [
-      'allow all',
-      'accept all',
-      'accept',
-      'akzeptieren',
-      'alle akzeptieren',
-      'zustimmen',
-      'i agree'
-    ]
-    const visible = (element: Element) => {
-      const style = getComputedStyle(element)
-      const box = element.getBoundingClientRect()
-      return (
-        style.display !== 'none' && style.visibility !== 'hidden' && box.width > 0 && box.height > 0
+/**
+ * Consent controls by intent, the most privacy-preserving first. Rejecting optional cookies
+ * closes the layer like accepting does, without loading the trackers that change a page's state.
+ */
+export const CONSENT_REJECT_CONTROL =
+  /^\s*(notwendige cookies|nur notwendige|nur essenzielle|only necessary|necessary cookies only|essential cookies only|reject all|reject|decline|ablehnen|nicht zustimmen)/i
+
+export const CONSENT_ACCEPT_CONTROL =
+  /^\s*(alle cookies|alle akzeptieren|cookies akzeptieren|akzeptieren|accept all|allow all|accept|zustimmen|einverstanden|ich stimme zu|i agree|i accept|got it|verstanden)/i
+
+/** Every element that can act as a control inside a page, shadow DOM included. */
+const PAGE_CONTROL = 'button, [role="button"], a, input[type="button"], input[type="submit"]'
+
+/**
+ * Names a consent layer carries in its own markup: the keywords a banner uses, and the vendors
+ * that render one. Text alone would match an article about cookies, so the layer also has to
+ * offer a choice.
+ */
+const CONSENT_LAYER_HINT =
+  /cookie|consent|einwilligung|datenschutz|privacy|gdpr|usercentrics|onetrust|cookiebot|sourcepoint|quantcast|trustarc|osano|didomi|iubenda|cookieyes|termly/i
+
+/** Marks the consent layers on screen and returns how many there are. */
+async function markConsentLayers(page: Page): Promise<number> {
+  return page.evaluate(
+    ({ hint, reject, accept }) => {
+      const pattern = new RegExp(hint, 'i')
+      const choices = [new RegExp(reject, 'i'), new RegExp(accept, 'i')]
+      const viewportArea = window.innerWidth * window.innerHeight
+      const composed = (root: ParentNode): Element[] => {
+        const elements: Element[] = []
+        for (const element of root.querySelectorAll('*')) {
+          elements.push(element)
+          if (element.shadowRoot) elements.push(...composed(element.shadowRoot))
+        }
+        return elements
+      }
+      const visible = (element: Element) => {
+        const style = getComputedStyle(element)
+        const box = element.getBoundingClientRect()
+        return (
+          style.display !== 'none' && style.visibility !== 'hidden' && box.width > 0 && box.height > 0
+        )
+      }
+      const offersChoice = (layer: Element) =>
+        composed(layer).some(
+          (element) =>
+            element instanceof HTMLElement &&
+            element.matches('button, [role="button"], a, input[type="button"], input[type="submit"]') &&
+            visible(element) &&
+            choices.some((choice) =>
+              choice.test((element.textContent ?? '').replace(/\s+/g, ' ').trim())
+            )
+        )
+      for (const marked of composed(document.body)) {
+        marked.removeAttribute('data-openpencil-consent')
+      }
+      const candidates = composed(document.body).filter((element): element is HTMLElement => {
+        if (!(element instanceof HTMLElement)) return false
+        const box = element.getBoundingClientRect()
+        if (box.width * box.height < viewportArea * 0.05) return false
+        const style = getComputedStyle(element)
+        if (style.display === 'none' || style.visibility === 'hidden') return false
+        if (style.position !== 'fixed' && style.position !== 'sticky') return false
+        const role = element.getAttribute('role')
+        const dialog =
+          role === 'dialog' ||
+          role === 'alertdialog' ||
+          element.getAttribute('aria-modal') === 'true'
+        // A page header that links to the cookie settings is navigation, not a banner.
+        if (!dialog && element.matches('header, nav, footer')) return false
+        if (!offersChoice(element)) return false
+        const name = `${element.id} ${element.className}`
+        const vendorFrame = [...element.querySelectorAll('iframe')].some((frame) =>
+          pattern.test(`${frame.src} ${frame.id} ${frame.className}`)
+        )
+        return dialog || pattern.test(name) || pattern.test(element.textContent ?? '') || vendorFrame
+      })
+      const tops = candidates.filter(
+        (layer) => !candidates.some((other) => other !== layer && other.contains(layer))
       )
+      tops.forEach((layer, index) =>
+        layer.setAttribute('data-openpencil-consent', String(index))
+      )
+      return tops.length
+    },
+    {
+      hint: CONSENT_LAYER_HINT.source,
+      reject: CONSENT_REJECT_CONTROL.source,
+      accept: CONSENT_ACCEPT_CONTROL.source
     }
+  )
+}
+
+/**
+ * Clicks a control inside a marked layer. Playwright clicks as a user does, and waits for a
+ * navigation a site may start when it records the decision; clicking from inside an evaluate
+ * would leave the script waiting on a page that is already going away.
+ */
+async function clickMarkedControl(page: Page, pattern: RegExp): Promise<boolean> {
+  const controls = page
+    .locator('[data-openpencil-consent]')
+    .locator(PAGE_CONTROL)
+    .filter({ hasText: pattern })
+  const count = Math.min(await controls.count(), 10)
+  for (let index = 0; index < count; index++) {
+    const control = controls.nth(index)
+    if (!(await control.isVisible().catch(() => false))) continue
+    try {
+      await control.click({ timeout: 5_000 })
+      return true
+    } catch {
+      return false
+    }
+  }
+  return false
+}
+
+/** Hides marked layers a site did not close, and the empty backdrop a modal leaves behind. */
+async function hideMarkedConsentLayers(page: Page) {
+  await page.evaluate(() => {
+    const viewportArea = window.innerWidth * window.innerHeight
     const composed = (root: ParentNode): Element[] => {
       const elements: Element[] = []
       for (const element of root.querySelectorAll('*')) {
@@ -197,21 +299,53 @@ async function dismissConsent(page: Page) {
       }
       return elements
     }
-    const buttons = composed(document).filter(
+    const layers = composed(document.body).filter(
       (element): element is HTMLElement =>
-        element instanceof HTMLElement &&
-        element.matches('button, [role="button"], a, input[type="button"], input[type="submit"]')
+        element instanceof HTMLElement && element.hasAttribute('data-openpencil-consent')
     )
-    for (const button of buttons) {
-      if (!visible(button)) continue
-      const text = button.textContent.trim().toLowerCase()
-      if (!words.some((word) => text === word || text.startsWith(`${word} `))) continue
-      button.click()
-      return true
+    for (const layer of layers) layer.style.setProperty('display', 'none', 'important')
+    if (layers.length === 0) return
+    for (const element of composed(document.body)) {
+      if (!(element instanceof HTMLElement) || element.hasAttribute('data-openpencil-consent')) {
+        continue
+      }
+      if ((element.textContent ?? '').trim().length > 2) continue
+      const style = getComputedStyle(element)
+      if (style.position !== 'fixed' && style.position !== 'absolute') continue
+      const box = element.getBoundingClientRect()
+      if (box.width * box.height < viewportArea * 0.5) continue
+      element.style.setProperty('display', 'none', 'important')
     }
-    return false
+    // A consent layer locks the page scroll while it is open; its handler may not run again.
+    for (const container of [document.documentElement, document.body]) {
+      if (getComputedStyle(container).overflowY === 'hidden') {
+        container.style.setProperty('overflow-y', 'visible', 'important')
+      }
+    }
   })
-  if (clicked) await page.waitForTimeout(250)
+}
+
+/**
+ * Closes a consent layer before the page is cloned or screenshotted. A page treats its banner as
+ * a state, not as content: it is chrome, and the import should show the page underneath.
+ *
+ * Clicking the banner's own choice keeps the page consistent with itself when a site records the
+ * decision. A layer that ignores the click, or one a third party reopens, is hidden instead, so a
+ * banner never reaches the reference screenshot or the captured document.
+ */
+async function dismissConsent(page: Page) {
+  if ((await markConsentLayers(page)) === 0) return
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const clicked =
+      (await clickMarkedControl(page, CONSENT_REJECT_CONTROL)) ||
+      (await clickMarkedControl(page, CONSENT_ACCEPT_CONTROL))
+    if (!clicked) break
+    await page.waitForTimeout(400)
+    if ((await markConsentLayers(page)) === 0) return
+  }
+  await hideMarkedConsentLayers(page)
+  await markConsentLayers(page)
+  await page.waitForTimeout(150)
 }
 
 /** Text a close control may carry, in the languages a captured page commonly uses. */
@@ -780,6 +914,11 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
       } catch (error) {
         console.warn('Could not capture the original page reference:', error)
       }
+      // A full-page screenshot scrolls the page to its end, and a site collapses its sticky
+      // header once scrolling starts. Put the page back at the top so the clone keeps the
+      // header the reference shows.
+      await page.evaluate(() => window.scrollTo(0, 0))
+      await settle(page, Math.min(args.waitMs, 250))
     }
 
     // A page with tens of thousands of elements cannot be cloned with every computed style; the
