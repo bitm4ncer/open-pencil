@@ -7,7 +7,6 @@ import {
 } from '@open-pencil/core/io/formats/html/layers'
 import { faceStyleName, fontFamilyAliases, fontManager, sfntFont } from '@open-pencil/core/text'
 import { parseFontFaceRules } from '@open-pencil/dom-css'
-import type { DesignDocument } from '@open-pencil/dom-css'
 import { browserHTMLToDesignDocument } from '@open-pencil/dom-css/browser'
 import type { SceneGraph } from '@open-pencil/scene-graph'
 import { nextFrame } from '@open-pencil/vue/shared/frame'
@@ -149,22 +148,6 @@ export async function readDOMGraph(
   })
   options.signal?.throwIfAborted()
   return sceneGraphFromStyledHTML(styled, {
-    pageName: options.documentName ?? 'DOM Import'
-  })
-}
-
-/**
- * Builds a document graph from a page the capture already composed, styled, and measured.
- * Registering its fonts is all that remains, so the HTML is never parsed and laid out again.
- */
-export async function readDOMGraphFromDocument(
-  document: DesignDocument,
-  html: string,
-  options: { cssText?: string; documentName?: string; signal?: AbortSignal } = {}
-): Promise<SceneGraph> {
-  await registerPageFonts(html, options.cssText)
-  options.signal?.throwIfAborted()
-  return sceneGraphFromStyledHTML(document, {
     pageName: options.documentName ?? 'DOM Import'
   })
 }

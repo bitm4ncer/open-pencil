@@ -1,7 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
 
-import { CANVAS_BG_COLOR } from '@open-pencil/core/constants'
-
 import { CanvasHelper } from '#tests/helpers/canvas'
 
 const PAGE_URL = 'https://example.com/'
@@ -9,33 +7,6 @@ const PAGE_URL = 'https://example.com/'
 const CAPTURED_HTML = `<!doctype html><html><head><meta charset="utf-8">
 <style>html,body{margin:0;padding:0}</style></head>
 <body><h1 style="margin:0;font:700 40px sans-serif;color:#111111">Imported heading</h1></body></html>`
-
-/** The same page as the capture's composed model, which skips parsing and laying out the HTML. */
-const CAPTURED_DOCUMENT = {
-  type: 'document',
-  children: [
-    {
-      type: 'element',
-      tagName: 'h1',
-      attrs: {},
-      computedStyle: {
-        display: 'block',
-        margin: '0px',
-        'font-family': 'sans-serif',
-        'font-size': '40px',
-        'font-weight': '700',
-        color: 'rgb(17, 17, 17)',
-        'line-height': 'normal',
-        'white-space': 'normal'
-      },
-      layout: {
-        box: { x: 0, y: 0, width: 320, height: 48 },
-        lines: [{ x: 0, y: 0, width: 320, height: 48 }]
-      },
-      children: [{ type: 'text', text: 'Imported heading' }]
-    }
-  ]
-}
 
 /** A one-pixel PNG, enough for the reference layer's image fill to decode. */
 const REFERENCE_PNG =
@@ -57,7 +28,6 @@ test('imports a page with its reference image from the File menu', async ({ page
     route.fulfill({
       json: {
         html: CAPTURED_HTML,
-        document: CAPTURED_DOCUMENT,
         pageBackground: 'rgb(255, 255, 255)',
         reference: { src: REFERENCE_PNG, width: 320, height: 200 },
         svgs: []
@@ -92,7 +62,7 @@ test('imports a page with its reference image from the File menu', async ({ page
   expect(imported.documentName).toContain('example.com')
   expect(imported.texts).toContain('Imported heading')
   expect(imported.imageLayers).toBe(1)
-  expect(imported.pageBackground).toMatchObject(CANVAS_BG_COLOR)
+  expect(imported.pageBackground).toMatchObject({ r: 1, g: 1, b: 1, a: 1 })
   canvas.assertNoErrors()
 })
 

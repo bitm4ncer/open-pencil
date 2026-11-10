@@ -8,8 +8,6 @@ import type { Browser, BrowserContext, Locator, Page } from '@playwright/test'
 import { fromUint8Array, isValid, toUint8Array } from 'js-base64'
 
 import { WEB_SVG_ATTRIBUTE } from '@open-pencil/dom-css/scene-graph'
-import { CAPTURE_COMPUTED_PROPERTIES } from '@open-pencil/dom-css'
-import type { DesignDocument, DesignLayout, DesignNode } from '@open-pencil/dom-css'
 import type { Rect } from '@open-pencil/scene-graph/primitives'
 
 import type { CapturedSVG } from '#core/io/formats/svg/capture'
@@ -92,61 +90,8 @@ async function loadPlaywright() {
   }
 }
 
-/**
- * One Chromium process serves every capture, while each page still gets its own fresh context.
- * Reusing the process removes the launch cost from a batch; the isolated context keeps cookies,
- * storage, and cache from leaking between deterministic captures.
- */
-let browserLease: { key: string; promise: Promise<Browser> } | null = null
-let activeCaptures = 0
-let browserIdleTimer: ReturnType<typeof setTimeout> | null = null
-
-async function acquireBrowser(executable?: string): Promise<Browser> {
-  const key = executable ?? installedChromium() ?? ''
-  if (browserIdleTimer) {
-    clearTimeout(browserIdleTimer)
-    browserIdleTimer = null
-  }
-  if (browserLease && browserLease.key !== key) {
-    const previous = browserLease
-    browserLease = null
-    await previous.promise.then((browser) => browser.close()).catch(() => undefined)
-  }
-  if (!browserLease) {
-    const { chromium } = await loadPlaywright()
-    browserLease = {
-      key,
-      promise: chromium.launch({ headless: true, executablePath: key || undefined })
-    }
-  }
-  const browser = await browserLease.promise
-  if (!browser.isConnected()) {
-    browserLease = null
-    return acquireBrowser(executable)
-  }
-  activeCaptures++
-  return browser
-}
-
-function releaseBrowser(): void {
-  activeCaptures = Math.max(0, activeCaptures - 1)
-  if (activeCaptures > 0) return
-  if (browserIdleTimer) clearTimeout(browserIdleTimer)
-  browserIdleTimer = setTimeout(() => {
-    browserIdleTimer = null
-    const lease = browserLease
-    browserLease = null
-    void lease?.promise.then((browser) => browser.close()).catch(() => undefined)
-  }, 30_000)
-}
-
 export interface CaptureResult {
   html: string
-  /**
-   * The composed page with resolved styles and captured boxes, so a browser importer can build
-   * its layers without parsing the HTML and laying it out a second time.
-   */
-  document?: DesignDocument
   /** The page's solid background, which the HTML body style alone does not carry into the page. */
   pageBackground?: string
   /** The untouched page as the browser drew it, when `reference` was asked for. */
@@ -167,8 +112,6 @@ export interface CaptureResult {
     fallback?: 'screenshot'
     /** Elements the source page had before the screenshot fallback. */
     sourceElements?: number
-    /** Milliseconds each capture phase took, for measuring speed work. */
-    timings?: Record<string, number>
   }
 }
 
@@ -227,85 +170,15 @@ async function scrollThrough(page: Page) {
   })
 }
 
-/**
- * Waits for the DOM to stop changing after custom elements hydrate. Lit components render their
- * shadow content on intersection, so a fast scroll can reach the clone before prices or section
- * backgrounds exist. Resolves after `quietMs` without a mutation, capped at `capMs`.
- */
-async function settleDom(page: Page, quietMs = 300, capMs = 1_200) {
-  await page.evaluate(
-    ({ quiet, cap }) =>
-      new Promise<void>((resolve) => {
-        let quietTimer: ReturnType<typeof setTimeout>
-        let capTimer: ReturnType<typeof setTimeout>
-        const finish = () => {
-          observer.disconnect()
-          clearTimeout(quietTimer)
-          clearTimeout(capTimer)
-          resolve()
-        }
-        const observer = new MutationObserver(() => {
-          clearTimeout(quietTimer)
-          quietTimer = setTimeout(finish, quiet)
-        })
-        observer.observe(document.body, {
-          subtree: true,
-          childList: true,
-          attributes: true,
-          characterData: true
-        })
-        quietTimer = setTimeout(finish, quiet)
-        capTimer = setTimeout(finish, cap)
-      }),
-    { quiet: quietMs, cap: capMs }
-  )
-}
-
-/**
- * Remembers where fixed elements sat in the first stable state. Scrolling can collapse a
- * hide-on-scroll navigation, and the capture should keep the state the page opened in.
- */
-async function recordFixedBoxes(page: Page) {
-  await page.evaluate(() => {
-    const boxes = new Map<Element, { x: number; y: number }>()
-    const children = (element: Element): Element[] => {
-      let nodes: Node[]
-      if (element instanceof HTMLSlotElement) {
-        const assigned = element.assignedNodes({ flatten: true })
-        nodes = assigned.length > 0 ? assigned : [...element.childNodes]
-      } else {
-        nodes = element.shadowRoot ? [...element.shadowRoot.childNodes] : [...element.childNodes]
-      }
-      return nodes.filter((node): node is Element => node.nodeType === Node.ELEMENT_NODE)
-    }
-    const walk = (element: Element) => {
-      if (getComputedStyle(element).position === 'fixed') {
-        const rect = element.getBoundingClientRect()
-        boxes.set(element, { x: rect.x, y: rect.y })
-      }
-      for (const child of children(element)) walk(child)
-    }
-    walk(document.body)
-    ;(window as unknown as { __openpencilFixedBoxes?: Map<Element, { x: number; y: number }> })
-      .__openpencilFixedBoxes = boxes
-  })
-}
-
 /** Accepts a cookie banner before the page is cloned or screenshotted. */
 async function dismissConsent(page: Page) {
   const clicked = await page.evaluate(() => {
     const words = [
       'allow all',
-      'allow all cookies',
       'accept all',
-      'accept all cookies',
       'accept',
       'akzeptieren',
       'alle akzeptieren',
-      'alle cookies akzeptieren',
-      'alle cookies erlauben',
-      'cookies erlauben',
-      'erlauben',
       'zustimmen',
       'i agree'
     ]
@@ -352,10 +225,6 @@ export const OVERLAY_DISMISS_LABELS = [
   'allow all',
   'akzeptieren',
   'alle akzeptieren',
-  'alle cookies akzeptieren',
-  'alle cookies erlauben',
-  'cookies erlauben',
-  'erlauben',
   'zustimmen',
   'i agree'
 ] as const
@@ -393,27 +262,7 @@ async function dismissOverlays(page: Page) {
       return false
     }, OVERLAY_DISMISS_LABELS)
   try {
-    const clicked = await dismiss()
-    if (clicked) await page.waitForTimeout(300)
-    // A consent layer that ignores the click, or fades too slowly to be gone before the clone,
-    // would still cover the page. Remove the layer itself once it is a full-viewport dialog.
-    await page.evaluate(() => {
-      const viewport = window.innerWidth * window.innerHeight
-      for (const element of document.querySelectorAll('body *')) {
-        if (!(element instanceof HTMLElement)) continue
-        const style = getComputedStyle(element)
-        if (style.position !== 'fixed' && style.position !== 'absolute') continue
-        const box = element.getBoundingClientRect()
-        if (box.width * box.height < viewport * 0.5) continue
-        const text = (element.textContent ?? '').toLowerCase()
-        if (!/(cookie|consent|datenschutz|privacy)/.test(text)) continue
-        const looksLikeDialog =
-          element.getAttribute('role') === 'dialog' ||
-          element.getAttribute('aria-modal') === 'true' ||
-          /(^|\s)(modal|consent)(\s|$)/i.test(element.className)
-        if (looksLikeDialog) element.remove()
-      }
-    })
+    if (await dismiss()) await page.waitForTimeout(250)
   } catch (error) {
     console.warn('Could not dismiss a page overlay:', error)
   }
@@ -546,7 +395,7 @@ function imageMime(url: string, contentType: string | null): string {
 async function inlineRemoteImages(
   context: BrowserContext,
   html: string
-): Promise<{ html: string; inlined: number; replacements: Map<string, string> }> {
+): Promise<{ html: string; inlined: number }> {
   const urls = new Set<string>()
   for (const match of html.matchAll(/<img\b[^>]*\bsrc="(https?:[^"]+)"/gi)) {
     if (match[1]) urls.add(match[1])
@@ -571,49 +420,13 @@ async function inlineRemoteImages(
   })
   let next = html
   let inlined = 0
-  const replacements = new Map<string, string>()
   for (const entry of entries) {
     if (!entry) continue
     const [url, data] = entry
     next = next.split(`src="${url}"`).join(`src="${data}"`)
-    replacements.set(url, data)
     inlined++
   }
-  return { html: next, inlined, replacements }
-}
-
-/** Applies the browser-context image data URLs and SVG marker remap to the captured model. */
-function applyCapturedAssetReplacements(
-  document: DesignDocument,
-  replacements: ReadonlyMap<string, string>,
-  remap: ReadonlyMap<number, number>
-): void {
-  const replaceURLs = (value: string): string => {
-    let next = value
-    for (const [url, data] of replacements) {
-      if (next.includes(url)) next = next.split(url).join(data)
-    }
-    return next
-  }
-  const walk = (node: DesignNode) => {
-    if (node.type === 'text') return
-    if (node.attrs.src && replacements.has(node.attrs.src)) {
-      node.attrs.src = replacements.get(node.attrs.src) ?? node.attrs.src
-    }
-    const marker = node.attrs[WEB_SVG_ATTRIBUTE]
-    if (marker !== undefined) {
-      const index = Number.parseInt(marker, 10)
-      const remapped = remap.get(index)
-      if (remapped !== undefined) node.attrs[WEB_SVG_ATTRIBUTE] = String(remapped)
-    }
-    if (node.computedStyle) {
-      for (const [property, value] of Object.entries(node.computedStyle)) {
-        if (value.includes('url(')) node.computedStyle[property] = replaceURLs(value)
-      }
-    }
-    for (const child of node.children) walk(child)
-  }
-  for (const child of document.children) walk(child)
+  return { html: next, inlined }
 }
 
 /**
@@ -626,31 +439,11 @@ async function pruneHidden(page: Page, selector?: string): Promise<number> {
   return page.evaluate((target) => {
     const root = target ? document.querySelector(target) : document.body
     if (!root) return 0
-
-    /** The elements a browser composes: slot assignments, an open shadow root's, or the light DOM's. */
-    function renderedChildren(element: Element): Element[] {
-      let nodes: Node[]
-      if (element instanceof HTMLSlotElement) {
-        const assigned = element.assignedNodes({ flatten: true })
-        nodes = assigned.length > 0 ? assigned : [...element.childNodes]
-      } else {
-        nodes = element.shadowRoot ? [...element.shadowRoot.childNodes] : [...element.childNodes]
-      }
-      return nodes.filter((node): node is Element => node.nodeType === Node.ELEMENT_NODE)
-    }
-
-    const elements: Element[] = []
-    const walk = (element: Element) => {
-      for (const child of renderedChildren(element)) {
-        elements.push(child)
-        walk(child)
-      }
-    }
-    walk(root)
-
+    const elements = [...root.querySelectorAll('*')].reverse()
     const nonRendered = new Set(['STYLE', 'LINK', 'SCRIPT', 'META', 'TITLE', 'TEMPLATE', 'BASE'])
-    // Children first: a removed wrapper takes its branch with it.
-    for (const element of elements.reverse()) {
+    for (const element of elements) {
+      // A stylesheet or script in the body has no box, but removing it would restyle the page
+      // before its computed styles are copied.
       if (nonRendered.has(element.tagName)) continue
       if (!(element instanceof HTMLElement)) continue
       const style = getComputedStyle(element)
@@ -669,14 +462,7 @@ async function pruneHidden(page: Page, selector?: string): Promise<number> {
       if (box.width > 0 && box.height > 0) continue
       if (element.children.length === 0) element.remove()
     }
-
-    let remaining = 0
-    const count = (element: Element) => {
-      remaining++
-      for (const child of renderedChildren(element)) count(child)
-    }
-    count(root)
-    return remaining
+    return root.querySelectorAll('*').length
   }, selector)
 }
 
@@ -913,19 +699,14 @@ async function screenshotFallback(
 export async function captureWebPage(args: CaptureOptions): Promise<CaptureResult> {
   let browser: Browser | undefined
   let context: BrowserContext | undefined
-  const started = performance.now()
-  let mark = started
-  const timings: Record<string, number> = {}
-  const lap = (phase: string) => {
-    const now = performance.now()
-    timings[phase] = Math.round(now - mark)
-    mark = now
-  }
   const report = (phase: string, detail?: string) => args.onProgress?.({ phase, detail })
   try {
     report('launching')
-    browser = await acquireBrowser(args.executable)
-    lap('launch')
+    const { chromium } = await loadPlaywright()
+    browser = await chromium.launch({
+      headless: true,
+      executablePath: args.executable ?? installedChromium()
+    })
     context = await browser.newContext({
       viewport: args.viewport,
       deviceScaleFactor: 1,
@@ -934,27 +715,19 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
     const page = await context.newPage()
     report('navigating', args.url)
     await page.goto(args.url, { waitUntil: 'domcontentloaded', timeout: 60_000 })
-    lap('navigate')
     report('settling')
     await settle(page, args.waitMs)
-    lap('settle')
-    report('dismissing overlays')
-    await dismissConsent(page)
-    await dismissOverlays(page)
-    await settleDom(page)
-    report('recording fixed elements')
-    await recordFixedBoxes(page)
     if (args.scroll) {
       report('scrolling')
       await scrollThrough(page)
       await settle(page, Math.min(args.waitMs, 250))
-      await settleDom(page)
-      lap('scroll')
     }
+    report('dismissing overlays')
+    await dismissConsent(page)
+    await dismissOverlays(page)
     await revealAnimatedContent(page)
     report('rasterizing canvases')
     await rasterizeDynamicContent(page)
-    lap('overlays')
 
     let reference: CaptureResult['reference']
     if (args.reference) {
@@ -987,38 +760,25 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
         console.warn('Could not capture the original page reference:', error)
       }
     }
-    lap('reference')
 
     // A page with tens of thousands of elements cannot be cloned with every computed style; the
     // renderer runs out of memory. Prune what is not painted first; only a page still too large
     // after that falls back to one screenshot.
     report('pruning hidden layers')
     const sourceElements = await pruneHidden(page, args.selector)
-    lap('prune')
     if (sourceElements > MAX_DOM_ELEMENTS) {
-      const fallback = await screenshotFallback(page, sourceElements, args.selector)
       return {
-        ...fallback,
-        reference,
-        stats: {
-          ...fallback.stats,
-          timings: { ...timings, total: Math.round(performance.now() - started) }
-        }
+        ...(await screenshotFallback(page, sourceElements, args.selector)),
+        reference
       }
     }
 
     report('cloning the page')
     const captured = await page.evaluate(
       // oxlint-disable-next-line complexity -- one browser-side walk over the captured DOM
-      async ({ selector, svgAttribute, properties, viewportWidth }) => {
+      async ({ selector, svgAttribute }) => {
         const root = selector ? document.querySelector(selector) : document.body
         if (!root) throw new Error(`Selector "${selector}" did not match anything.`)
-        // Page boxes are document coordinates. A body that still sits below an overlay would
-        // otherwise shift every layer, and a fixed nav above it would land off the page.
-        const measurementOrigin = selector
-          ? root.getBoundingClientRect()
-          : new DOMRect(0, 0, window.innerWidth, window.innerHeight)
-        const layoutByTarget = new Map<Element, DesignLayout>()
 
         /** Nodes a browser renders: slot content, an open shadow root's, or the light DOM's. */
         function renderedChildNodes(element: Element): Node[] {
@@ -1059,142 +819,6 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
           }
           walk(rootElement)
           return elements
-        }
-
-        // Fixed elements keep the box they had before scrolling; their descendants move with them.
-        const initialFixedBoxes = (
-          window as unknown as {
-            __openpencilFixedBoxes?: Map<Element, { x: number; y: number }>
-          }
-        ).__openpencilFixedBoxes
-        const nearestFixed = new Map<Element, Element>()
-        const assignFixedAncestors = (element: Element, fixed: Element | undefined) => {
-          const own = getComputedStyle(element).position === 'fixed' ? element : fixed
-          if (own) nearestFixed.set(element, own)
-          for (const child of renderedChildren(element)) assignFixedAncestors(child, own)
-        }
-        assignFixedAncestors(root, undefined)
-
-        /** Read at measurement time: a hide-on-scroll bar may collapse during the async walk. */
-        function fixedOffsetFor(element: Element): { x: number; y: number } {
-          const fixed = nearestFixed.get(element)
-          if (!fixed) return { x: 0, y: 0 }
-          const initial = initialFixedBoxes?.get(fixed)
-          const current = fixed.getBoundingClientRect()
-          let offset = { x: 0, y: 0 }
-          if (initial) {
-            offset = { x: initial.x - current.x, y: initial.y - current.y }
-          } else if (current.bottom <= 0 && current.width >= viewportWidth * 0.5) {
-            // A full-width bar hidden above the viewport is the collapsed state of a
-            // hide-on-scroll navigation; show it where it sat when it was expanded.
-            offset = { x: -current.x, y: -current.y }
-          }
-          return offset
-        }
-
-        function toRect(rect: DOMRectReadOnly, origin: DOMRectReadOnly): Rect {
-          return {
-            x: rect.left - origin.left,
-            y: rect.top - origin.top,
-            width: rect.width,
-            height: rect.height
-          }
-        }
-
-        function shifted(
-          rect: DOMRectReadOnly,
-          origin: DOMRectReadOnly,
-          offset: { x: number; y: number }
-        ): Rect {
-          const result = toRect(rect, origin)
-          result.x += offset.x
-          result.y += offset.y
-          return result
-        }
-
-        function hasArea(rect: DOMRectReadOnly): boolean {
-          return rect.width > 0 && rect.height > 0
-        }
-
-        /** Display values whose box flows in a line, so its text belongs to the lines around it. */
-        function isInlineFlow(display: string): boolean {
-          return display === 'inline' || display === 'contents'
-        }
-
-        /** The text nodes an element lays out in its own lines: its own, and its inline descendants'. */
-        function lineTextNodes(element: Element): Text[] {
-          const texts: Text[] = []
-          for (const child of renderedChildNodes(element)) {
-            if (child.nodeType === Node.TEXT_NODE) {
-              if ((child.nodeValue ?? '').trim().length > 0) texts.push(child as Text)
-            } else if (child.nodeType === Node.ELEMENT_NODE) {
-              const childElement = child as Element
-              if (isInlineFlow(getComputedStyle(childElement).display)) {
-                texts.push(...lineTextNodes(childElement))
-              }
-            }
-          }
-          return texts
-        }
-
-        function boundsOf(rects: readonly Rect[]): Rect {
-          const left = Math.min(...rects.map((rect) => rect.x))
-          const top = Math.min(...rects.map((rect) => rect.y))
-          const right = Math.max(...rects.map((rect) => rect.x + rect.width))
-          const bottom = Math.max(...rects.map((rect) => rect.y + rect.height))
-          return { x: left, y: top, width: right - left, height: bottom - top }
-        }
-
-        /** Rects of text on one line overlap vertically by more than half; each line spans its rects. */
-        function groupIntoLines(rects: readonly Rect[]): Rect[] {
-          const lines: Rect[][] = []
-          for (const rect of [...rects].sort((a, b) => a.y - b.y || a.x - b.x)) {
-            const line = lines.find((group) => {
-              const span = boundsOf(group)
-              const overlap =
-                Math.min(span.y + span.height, rect.y + rect.height) - Math.max(span.y, rect.y)
-              return overlap > Math.min(span.height, rect.height) / 2
-            })
-            if (line) line.push(rect)
-            else lines.push([rect])
-          }
-          return lines.map((group) => boundsOf(group))
-        }
-
-        function measureElement(
-          element: Element,
-          origin: DOMRectReadOnly,
-          offset: { x: number; y: number } = { x: 0, y: 0 }
-        ): DesignLayout {
-          const layout: DesignLayout = { box: shifted(element.getBoundingClientRect(), origin, offset) }
-          if (isInlineFlow(getComputedStyle(element).display)) {
-            const fragments = Array.from(element.getClientRects()).filter(hasArea)
-            if (fragments.length > 0) {
-              layout.fragments = fragments.map((rect) => shifted(rect, origin, offset))
-            }
-            return layout
-          }
-          // Most elements carry no text; only text-holding boxes need their line rects.
-          if (!element.textContent?.trim()) return layout
-          const rects = lineTextNodes(element).flatMap((text) => {
-            const range = element.ownerDocument.createRange()
-            range.selectNodeContents(text)
-            return Array.from(range.getClientRects())
-              .filter(hasArea)
-              .map((rect) => shifted(rect, origin, offset))
-          })
-          const lines = groupIntoLines(rects)
-          if (lines.length > 0) layout.lines = lines
-          return layout
-        }
-
-        function styleRecord(style: CSSStyleDeclaration): Record<string, string> {
-          const record: Record<string, string> = {}
-          for (const property of Array.from(style)) {
-            const value = style.getPropertyValue(property)
-            if (value) record[property] = value
-          }
-          return record
         }
 
         const sourceElements = renderedElements(root)
@@ -1348,47 +972,19 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
           })()
         }
 
-        const styleRecords = new Map<Element, Record<string, string>>()
-        const sourceByTarget = new Map<Element, Element>()
         for (let index = 0; index < sourceElements.length; index++) {
           const source = sourceElements[index]
           const target = targetElements[index] as HTMLElement
           const computed = getComputedStyle(source)
           let css = ''
-          const record: Record<string, string> = {}
-          for (const property of properties) {
+          for (const property of computed) {
             const value = computed.getPropertyValue(property)
-            if (value) {
-              css += `${property}:${value};`
-              record[property] = value
-            }
+            if (value) css += `${property}:${value};`
           }
           target.style.cssText = css
-          styleRecords.set(target, record)
-          sourceByTarget.set(target, source)
           target.removeAttribute('class')
           // SVG defs, gradients, and clips are referenced by id, so an inline SVG keeps its ids.
           if (!(target instanceof SVGElement)) target.removeAttribute('id')
-        }
-
-        // A section background is paint, not an <img>; leaving its URL remote drops the fill.
-        for (let index = 0; index < sourceElements.length; index++) {
-          const target = targetElements[index] as HTMLElement
-          const record = styleRecords.get(target)
-          if (!record) continue
-          for (const property of [
-            'background-image',
-            'mask-image',
-            'border-image-source'
-          ] as const) {
-            const value = record[property]
-            if (!value || !value.includes('url(')) continue
-            const inlined = await inlineURLs(value)
-            if (inlined !== value) {
-              record[property] = inlined
-              target.style.setProperty(property, inlined)
-            }
-          }
         }
 
         const noPseudoChildren = new Set(['IMG', 'INPUT', 'TEXTAREA', 'SELECT', 'VIDEO', 'CANVAS'])
@@ -1501,20 +1097,6 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
               style.zIndex === 'auto' ? '' : `z-index:${style.zIndex}`
             ].join(';')
             if (text) overlay.textContent = text
-            styleRecords.set(overlay, styleRecord(overlay.style))
-            // Measure the pseudo in the live page, where it has a layout box; the detached clone
-            // would otherwise leave it unplaced and decorative arrows or bars land at 0,0.
-            const liveOverlay = document.createElement(overlay.tagName)
-            liveOverlay.style.cssText = overlay.style.cssText
-            liveOverlay.style.visibility = 'hidden'
-            if (text) liveOverlay.textContent = text
-            if (pseudo === '::before') source.prepend(liveOverlay)
-            else source.append(liveOverlay)
-            layoutByTarget.set(
-              overlay,
-              measureElement(liveOverlay, measurementOrigin, fixedOffsetFor(source))
-            )
-            liveOverlay.remove()
             if (pseudo === '::before') target.prepend(overlay)
             else target.append(overlay)
           }
@@ -1702,25 +1284,6 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
           )
           .join('\n')
 
-        const untransformed = document.createElement('style')
-        untransformed.textContent =
-          '*,*::before,*::after{transform:none!important;translate:none!important;' +
-          'rotate:none!important;scale:none!important;transition:none!important;' +
-          'animation:none!important}'
-        document.head.append(untransformed)
-        try {
-          const origin = measurementOrigin
-          for (let index = 0; index < sourceElements.length; index++) {
-            const source = sourceElements[index]
-            layoutByTarget.set(
-              targetElements[index] as Element,
-              measureElement(source, origin, fixedOffsetFor(source))
-            )
-          }
-        } finally {
-          untransformed.remove()
-        }
-
         clone
           .querySelectorAll('script,link,style,noscript,template,meta,base')
           .forEach((element) => element.remove())
@@ -1743,79 +1306,15 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
         ].find(
           (color) => color && color !== 'transparent' && !/^rgba?\(0,\s*0,\s*0,\s*0\)$/i.test(color)
         )
-
-        /** The composed tree with resolved styles and boxes, without a second HTML parse. */
-        function toDesignNode(node: Node): DesignNode | null {
-          if (node.nodeType === Node.TEXT_NODE) {
-            const text = node.nodeValue ?? ''
-            return text.length > 0 ? { type: 'text', text } : null
-          }
-          if (node.nodeType !== Node.ELEMENT_NODE) return null
-          const element = node as Element
-          const attrs: Record<string, string> = {}
-          for (const attr of Array.from(element.attributes)) {
-            if (attr.name === 'class' || attr.name === 'style') continue
-            attrs[attr.name] = attr.value
-          }
-          const source = sourceByTarget.get(element)
-          if (source instanceof HTMLInputElement) {
-            attrs.value = source.value
-            if (source.checked) attrs.checked = ''
-          } else if (source instanceof HTMLTextAreaElement) {
-            attrs.value = source.value
-          }
-          return {
-            type: 'element',
-            tagName: element.tagName.toLowerCase(),
-            attrs,
-            children: Array.from(element.childNodes)
-              .map(toDesignNode)
-              .filter((child): child is DesignNode => child !== null),
-            computedStyle: styleRecords.get(element),
-            layout: layoutByTarget.get(element)
-          }
-        }
-        const documentModel: DesignDocument = {
-          type: 'document',
-          children: Array.from(clone.childNodes)
-            .map(toDesignNode)
-            .filter((node): node is DesignNode => node !== null)
-        }
-
-        // A fixed header is often a zero-height wrapper around a fixed nav. Hoisting it keeps an
-        // ancestor's clipping or zero box from hiding the navigation the page shows.
-        const fixedNodes: DesignNode[] = []
-        const liftFixed = (node: DesignNode): DesignNode[] => {
-          if (node.type === 'text') return [node]
-          const children = node.children.flatMap(liftFixed)
-          const lifted: DesignNode = { ...node, children }
-          if (node.computedStyle?.position === 'fixed') {
-            fixedNodes.push(lifted)
-            return []
-          }
-          return [lifted]
-        }
-        documentModel.children = [
-          ...documentModel.children.flatMap(liftFixed),
-          ...fixedNodes
-        ]
-
         return {
           html: `<!doctype html><html><head>${head}</head><body style="${bodyStyle}">${content}</body></html>`,
-          document: documentModel,
           pageBackground,
           stats: { ...stats, stylesheets: stylesheets.length + (links ? 1 : 0) },
           svgs: capturedSVGs
         }
       },
-      {
-        selector: args.selector,
-        svgAttribute: WEB_SVG_ATTRIBUTE,
-        properties: CAPTURE_COMPUTED_PROPERTIES,
-        viewportWidth: args.viewport.width
-      }
+      { selector: args.selector, svgAttribute: WEB_SVG_ATTRIBUTE }
     )
-    lap('clone')
 
     report('inlining stylesheets')
     const linked = await inlineLinkedStylesheets(context, captured.html)
@@ -1826,18 +1325,13 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
     ])
     report('inlining images')
     const remote = await inlineRemoteImages(context, fonts)
-    if (captured.document) {
-      applyCapturedAssetReplacements(captured.document, remote.replacements, resolved.remap)
-    }
     const html =
       resolved.remap.size === captured.svgs.length
         ? remote.html
         : remapSVGMarkers(remote.html, resolved.remap)
-    lap('assets')
     report('done')
     return {
       html,
-      document: captured.document,
       pageBackground: captured.pageBackground,
       reference,
       svgs: resolved.svgs.length > 0 ? resolved.svgs : undefined,
@@ -1850,12 +1344,11 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
         videos: captured.stats.videos,
         svgs: captured.stats.svgs,
         canvases: captured.stats.canvases,
-        bytes: Buffer.byteLength(html),
-        timings: { ...timings, total: Math.round(performance.now() - started) }
+        bytes: Buffer.byteLength(html)
       }
     }
   } finally {
     await context?.close().catch(() => undefined)
-    if (browser) releaseBrowser()
+    await browser?.close().catch(() => undefined)
   }
 }

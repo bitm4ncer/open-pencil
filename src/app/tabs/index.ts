@@ -543,17 +543,10 @@ export async function openStorageDocumentInNewTab(
   return store
 }
 
-/** Builds the graph for a file whose content a caller already prepared, such as a web capture. */
-export type PreparedFileImport = (options: {
-  signal: AbortSignal
-  documentName: string
-}) => Promise<SceneGraph>
-
 export async function openFileInNewTab(
   file: File,
   handle?: FileSystemFileHandle,
-  path?: string,
-  prepare?: PreparedFileImport
+  path?: string
 ): Promise<EditorStore> {
   const identity: DocumentSourceIdentity = {
     handle: handle ?? null,
@@ -604,20 +597,7 @@ export async function openFileInNewTab(
   let succeeded = false
   try {
     if (isDOMImportFile(file)) {
-      if (prepare) {
-        const graph = await prepare({
-          signal: load.signal,
-          documentName: store.state.documentName
-        })
-        await showImportedGraph(
-          store,
-          graph,
-          () => store.setDocumentSource(file.name, 'html', handle, path),
-          load
-        )
-      } else {
-        await store.openDOMFile(file, { handle, path, preparation: load })
-      }
+      await store.openDOMFile(file, { handle, path, preparation: load })
       completion.resolve(undefined)
       succeeded = true
       return store
