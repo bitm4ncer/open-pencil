@@ -51,8 +51,19 @@ jobs:
             https://github.com/bitm4ncer/open-pencil/releases/download/web-import-demo/dist.tar.gz
           tar -xzf /tmp/dist.tar.gz
 
+      - name: Build the workspace packages
+        env:
+          NODE_OPTIONS: --experimental-strip-types
+        run: bun run build:packages
+
       - name: Add the macOS Rust target
         run: rustup target add ${{ matrix.target }}
+
+      - name: Cache the Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          key: demo-${{ matrix.target }}
 
       - name: Write the demo Tauri config
         run: |
