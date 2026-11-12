@@ -45,6 +45,12 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Fetch the prebuilt frontend
+        run: |
+          curl -fsSLo /tmp/dist.tar.gz \
+            https://github.com/bitm4ncer/open-pencil/releases/download/web-import-demo/dist.tar.gz
+          tar -xzf /tmp/dist.tar.gz
+
       - name: Add the macOS Rust target
         run: rustup target add ${{ matrix.target }}
 
@@ -52,6 +58,9 @@ jobs:
         run: |
           cat > /tmp/tauri-demo.json <<'JSON'
           {
+            "build": {
+              "beforeBuildCommand": "bun run generate:icons --target desktop && bun run generate:tauri-menu"
+            },
             "bundle": {
               "createUpdaterArtifacts": false,
               "targets": ["app"],
