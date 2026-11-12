@@ -5,6 +5,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import type { Browser, BrowserContext, Locator, Page } from '@playwright/test'
+import type * as Playwright from '@playwright/test'
 import { fromUint8Array, isValid, toUint8Array } from 'js-base64'
 
 import { WEB_SVG_ATTRIBUTE } from '@open-pencil/dom-css/scene-graph'
@@ -104,11 +105,14 @@ function installedBrowsers(): string[] {
   ].filter((path): path is string => !!path)
 }
 
-async function loadPlaywright() {
-  const library = await import('playwright').catch(() => null)
+type PlaywrightModule = typeof Playwright
+
+async function loadPlaywright(): Promise<PlaywrightModule> {
+  const load = (specifier: string) => import(specifier) as Promise<PlaywrightModule>
+  const library = await load('playwright').catch(() => null)
   if (library) return library
   // A project that only has the test runner still carries the library it wraps.
-  const testRunner = await import('@playwright/test').catch(() => null)
+  const testRunner = await load('@playwright/test').catch(() => null)
   if (testRunner) return testRunner
   throw new Error(
     'Capturing a web page needs Playwright. Install it with `bun add -d @playwright/test` and `bunx playwright install chromium`, or have Chrome or Edge installed.'
@@ -883,16 +887,18 @@ export async function captureWebPage(args: CaptureOptions): Promise<CaptureResul
   try {
     report('launching')
     const { chromium } = await loadPlaywright()
-    browser = await chromium.launch({
+    const launched = await chromium.launch({
       headless: true,
       executablePath: args.executable ?? installedChromium()
     })
-    context = await browser.newContext({
+    browser = launched
+    const created = await launched.newContext({
       viewport: args.viewport,
       deviceScaleFactor: 1,
       locale: 'en-US'
     })
-    const page = await context.newPage()
+    context = created
+    const page = await created.newPage()
     report('navigating', args.url)
     await page.goto(args.url, { waitUntil: 'domcontentloaded', timeout: 60_000 })
     report('settling')
