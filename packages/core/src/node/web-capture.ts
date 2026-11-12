@@ -47,6 +47,8 @@ async function mapLimit<T, R>(
 /**
  * The Chromium a Playwright release older than the installed one left behind. Playwright names
  * its own build, so a project pinned to a newer release still uses the browser already on disk.
+ * When Playwright has no browser of its own, a Chrome or Edge already installed serves the
+ * capture, so a packaged build does not have to carry a second browser.
  */
 function installedChromium(): string | undefined {
   const roots = [
@@ -77,15 +79,42 @@ function installedChromium(): string | undefined {
       }
     }
   }
+  for (const candidate of installedBrowsers()) {
+    if (existsSync(candidate)) return candidate
+  }
   return undefined
+}
+
+/** Chrome and Edge already on the machine, in the order a capture prefers them. */
+function installedBrowsers(): string[] {
+  const programFiles = process.env['PROGRAMFILES']
+  const programFilesX86 = process.env['PROGRAMFILES(X86)']
+  return [
+    programFilesX86 && join(programFilesX86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    programFiles && join(programFiles, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    programFiles && join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    programFilesX86 && join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/microsoft-edge'
+  ].filter((path): path is string => !!path)
 }
 
 async function loadPlaywright() {
   try {
+    return await import('playwright')
+  } catch {
+    // A project that only has the test runner still carries the library it wraps.
+  }
+  try {
     return await import('@playwright/test')
   } catch {
     throw new Error(
-      'Capturing a web page needs Playwright. Install it with `bun add -d @playwright/test` and `bunx playwright install chromium`.'
+      'Capturing a web page needs Playwright. Install it with `bun add -d @playwright/test` and `bunx playwright install chromium`, or have Chrome or Edge installed.'
     )
   }
 }
