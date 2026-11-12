@@ -105,18 +105,14 @@ function installedBrowsers(): string[] {
 }
 
 async function loadPlaywright() {
-  try {
-    return await import('playwright')
-  } catch {
-    // A project that only has the test runner still carries the library it wraps.
-  }
-  try {
-    return await import('@playwright/test')
-  } catch {
-    throw new Error(
-      'Capturing a web page needs Playwright. Install it with `bun add -d @playwright/test` and `bunx playwright install chromium`, or have Chrome or Edge installed.'
-    )
-  }
+  const library = await import('playwright').catch(() => null)
+  if (library) return library
+  // A project that only has the test runner still carries the library it wraps.
+  const testRunner = await import('@playwright/test').catch(() => null)
+  if (testRunner) return testRunner
+  throw new Error(
+    'Capturing a web page needs Playwright. Install it with `bun add -d @playwright/test` and `bunx playwright install chromium`, or have Chrome or Edge installed.'
+  )
 }
 
 export interface CaptureResult {
