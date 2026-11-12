@@ -1,0 +1,137 @@
+name: macOS web import demo
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/web-import-clean
+    paths:
+      - .github/workflows/macos-demo.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/web-import-clean
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Add the macOS Rust target
+        run: rustup target add aarch64-apple-darwin
+
+      - name: Write the demo Tauri config
+        run: |
+          cat > /tmp/tauri-demo.json <<'JSON'
+          {
+            "bundle": {
+              "createUpdaterArtifacts": false,
+              "targets": ["app"],
+              "macOS": {
+                "signingIdentity": "-"
+              }
+            }
+          }
+          JSON
+
+      - name: Build the desktop app
+        env:
+          NODE_OPTIONS: --experimental-strip-types
+        run: bunx tauri build --target aarch64-apple-darwin --bundles app --config /tmp/tauri-demo.json
+
+      - name: Build the capture server runtime
+        run: |
+          mkdir -p runtime/mcp runtime/node
+          bun build packages/mcp/src/index.ts --target=node --format=esm \
+            --outfile runtime/mcp/index.mjs \
+            --external playwright --external @playwright/test --external css-tree
+          cat > runtime/mcp/package.json <<'JSON'
+          {
+            "name": "openpencil-demo-mcp",
+            "private": true,
+            "type": "module",
+            "dependencies": {
+              "css-tree": "3.2.1",
+              "playwright": "1.63.0"
+            }
+          }
+          JSON
+          bun install --cwd runtime/mcp
+          curl -fsSLo /tmp/node.tar.gz https://nodejs.org/dist/v22.14.0/node-v22.14.0-darwin-arm64.tar.gz
+          tar -xzf /tmp/node.tar.gz -C /tmp
+          cp /tmp/node-v22.14.0-darwin-arm64/bin/node runtime/node/node
+          cp /tmp/node-v22.14.0-darwin-arm64/LICENSE runtime/node/LICENSE
+
+      - name: Download the capture Chromium
+        run: |
+          export PLAYWRIGHT_BROWSERS_PATH="$PWD/runtime/ms-playwright"
+          mkdir -p "$PLAYWRIGHT_BROWSERS_PATH"
+          bunx playwright install chromium
+          rm -rf "$PLAYWRIGHT_BROWSERS_PATH"/chromium_headless_shell-* "$PLAYWRIGHT_BROWSERS_PATH"/ffmpeg-* "$PLAYWRIGHT_BROWSERS_PATH"/.links
+          du -sh "$PLAYWRIGHT_BROWSERS_PATH"
+
+      - name: Stage the demo
+        run: |
+          mkdir -p staging
+          cp -R target/aarch64-apple-darwin/release/bundle/macos/OpenPencil.app staging/
+          cp -R runtime staging/runtime
+          cat > "staging/Install OpenPencil Demo.command" <<'SH'
+          #!/bin/bash
+          set -e
+          HERE="$(cd "$(dirname "$0")" && pwd)"
+          DEST="$HOME/Library/Application Support/OpenPencilDemo"
+          mkdir -p "$HOME/Applications" "$DEST" "$HOME/.local/bin"
+          rm -rf "$DEST/runtime"
+          cp -R "$HERE/runtime" "$DEST/runtime"
+          cp -R "$HERE/OpenPencil.app" "$HOME/Applications/"
+          cat > "$HOME/.local/bin/openpencil-mcp-http" <<'SCRIPT'
+          #!/bin/sh
+          export PLAYWRIGHT_BROWSERS_PATH="$HOME/Library/Application Support/OpenPencilDemo/runtime/ms-playwright"
+          exec "$HOME/Library/Application Support/OpenPencilDemo/runtime/node/node" "$HOME/Library/Application Support/OpenPencilDemo/runtime/mcp/index.mjs" "$@"
+          SCRIPT
+          chmod +x "$HOME/.local/bin/openpencil-mcp-http"
+          xattr -dr com.apple.quarantine "$HOME/Applications/OpenPencil.app" 2>/dev/null || true
+          open "$HOME/Applications/OpenPencil.app"
+          SH
+          chmod +x "staging/Install OpenPencil Demo.command"
+          cat > staging/README.txt <<'TXT'
+          OpenPencil Web Import Demo (macOS, Apple Silicon)
+
+          1. Double-click "Install OpenPencil Demo.command".
+             If macOS blocks it: right-click -> Open, then confirm.
+          2. The script copies OpenPencil to ~/Applications and the capture runtime
+             to ~/Library/Application Support/OpenPencilDemo, then launches it.
+          3. In OpenPencil use File -> Import from web.
+
+          If Gatekeeper refuses the app: right-click OpenPencil.app -> Open.
+          Uninstall: delete ~/Applications/OpenPencil.app, ~/Library/Application Support/OpenPencilDemo
+          and ~/.local/bin/openpencil-mcp-http.
+          TXT
+          hdiutil create -volname "OpenPencil Web Import Demo" -srcfolder staging -ov -format UDZO \
+            "OpenPencil-Web-Import-Demo-macos-arm64.dmg"
+
+      - name: Upload the DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64-dmg
+          path: OpenPencil-Web-Import-Demo-macos-arm64.dmg
+          if-no-files-found: error
+
+      - name: Attach the DMG to the demo release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload web-import-demo OpenPencil-Web-Import-Demo-macos-arm64.dmg --clobber
